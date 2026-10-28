@@ -1,0 +1,46 @@
+# ============================================================
+#  Unreal Engine 5  (build artifacts - regenerate locally)
+# ============================================================
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# ============================================================
+#  IDE / editor
+# ============================================================
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+
+# ============================================================
+#  第三方示例包（体积过大，随时可从商城重新导入）
+#  Survival_Character 1.4G / Asian_Village 1.0G / Characters 126M / Weapons 14M
+# ============================================================
+Content/Survival_Character/
+Content/Asian_Village/
+Content/Characters/
+Content/Weapons/
+Content/Variant_Shooter/
+Content/Variant_Horror/
+Content/REPO/
+Content/__ExternalActors__/
+Content/__ExternalObjects__/
+
+# ============================================================
+#  OS junk
+# ============================================================
+Thumbs.db
+Desktop.ini
+.DS_Store
