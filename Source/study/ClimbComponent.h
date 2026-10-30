@@ -24,6 +24,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
 	float ClimbSpeed = 200.f;
 
+	/** Distance in front of the ladder the capsule centre is locked to. Must clear the
+	 *  capsule radius plus the collision box thickness, otherwise the two overlap. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
+	float GrabStandOff = 55.f;
+
+	/** When grabbing while standing on top, start this many cm below the top. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
+	float GrabEntryDrop = 120.f;
+
+	/** Sphere radius used to search for a ladder when the view trace misses. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
+	float GrabScanRadius = 60.f;
+
+	/** How many cm below the top the character starts sliding onto the ladder footprint. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
+	float VaultBlendHeight = 60.f;
+
+	/** Snap the view to the ladder and keep it there while climbing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
+	bool bLockViewWhileClimbing = true;
+
 	/** When true the component binds E itself. Set false if your Blueprint calls TryGrabLadder. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Climb")
 	bool bAutoBindInput = true;
@@ -59,6 +80,9 @@ private:
 
 	/** XY the character is locked to while climbing. */
 	FVector Anchor = FVector::ZeroVector;
+
+	/** XY of the ladder plus the top Z, used to slide onto its footprint. */
+	FVector LadderTopLocation = FVector::ZeroVector;
 
 	float BottomZ = 0.f;
 	float TopZ = 0.f;

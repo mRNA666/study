@@ -1,5 +1,6 @@
 #include "ClimbComponent.h"
 
+#include "CollisionShape.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "Engine/World.h"
@@ -74,13 +75,44 @@ bool UClimbComponent::TryGrabLadder()
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(ClimbTrace), false, Char);
-	if (!GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params))
+	AActor* HitActor = nullptr;
+
+	// Look trace first: what the camera is aiming at.
+	if (GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, ECC_Visibility, Params))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Climb] trace hit nothing"));
-		return false;
+		HitActor = Hit.GetActor();
 	}
 
-	AActor* HitActor = Hit.GetActor();
+	// Standing on top of a ladder, the view trace usually hits the floor above it.
+	// Sweep a sphere down around the character and look for a ladder there.
+	if (!HitActor)
+	{
+		TArray<FHitResult> Nearby;
+		const FVector ScanStart = Char->GetActorLocation() + FVector(0.f, 0.f, 20.f);
+		const FVector ScanEnd = ScanStart - FVector(0.f, 0.f, 250.f);
+		GetWorld()->SweepMultiByChannel(Nearby, ScanStart, ScanEnd, FQuat::Identity,
+			ECC_Visibility, FCollisionShape::MakeSphere(GrabScanRadius), Params);
+
+		for (const FHitResult& Candidate : Nearby)
+		{
+			AActor* CandidateActor = Candidate.GetActor();
+			if (CandidateActor &&
+				(Cast<ALadderActor>(CandidateActor) != nullptr ||
+					CandidateActor->ActorHasTag(TEXT("Ladder"))))
+			{
+				HitActor = CandidateActor;
+				UE_LOG(LogTemp, Warning, TEXT("[Climb] found ladder by nearby scan: %s"),
+					*HitActor->GetName());
+				break;
+			}
+		}
+	}
+
+	if (!HitActor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Climb] no ladder in sight or reach"));
+		return false;
+	}
 	const bool bIsLadder = HitActor &&
 		(Cast<ALadderActor>(HitActor) != nullptr || HitActor->ActorHasTag(TEXT("Ladder")));
 
@@ -93,18 +125,20 @@ bool UClimbComponent::TryGrabLadder()
 	Ladder = HitActor;
 
 	// Ask the ladder for its own numbers when possible, fall back to the actor transform.
+	// Keep the capsule clear of the ladder's own collision box.
+	float StandOff = GrabStandOff;
 	if (ALadderActor* LadderActor = Cast<ALadderActor>(HitActor))
 	{
-		Anchor = LadderActor->GetClimbAnchor();
+		StandOff = FMath::Max(LadderActor->StandOff, GrabStandOff);
 		BottomZ = LadderActor->GetBottomZ();
 		TopZ = LadderActor->GetTopZ();
 	}
 	else
 	{
-		Anchor = HitActor->GetActorLocation() - HitActor->GetActorForwardVector() * 30.f;
 		BottomZ = HitActor->GetActorLocation().Z;
 		TopZ = BottomZ + 300.f;
 	}
+	Anchor = HitActor->GetActorLocation() - HitActor->GetActorForwardVector() * StandOff;
 
 	// Keep the capsule centre inside the ladder range so feet stay between bottom and top.
 	const float HalfHeight = Char->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
@@ -114,11 +148,21 @@ bool UClimbComponent::TryGrabLadder()
 	// Gravity off: Flying has no gravity and no ground friction.
 	Char->GetCharacterMovement()->SetMovementMode(MOVE_Flying);
 
-	// Face the same way as the ladder.
-	Char->SetActorRotation(HitActor->GetActorRotation());
+	// Remember where the top of the ladder is in XY, so we can slide onto it.
+	LadderTopLocation = HitActor->GetActorLocation();
+	LadderTopLocation.Z = TopZ;
 
-	// Snap onto the anchor plane, keeping the current height inside the allowed range.
-	const float StartZ = FMath::Clamp(Char->GetActorLocation().Z, BottomZ, TopZ);
+	// Face the same way as the ladder, and point the camera at it too.
+	Char->SetActorRotation(HitActor->GetActorRotation());
+	PC->SetControlRotation(HitActor->GetActorRotation());
+
+	// Grab from the top: start a bit below the top so up and down both work.
+	const float CurrentZ = Char->GetActorLocation().Z;
+	float StartZ = FMath::Clamp(CurrentZ, BottomZ, TopZ);
+	if (CurrentZ >= TopZ - 5.f)
+	{
+		StartZ = FMath::Max(BottomZ, TopZ - GrabEntryDrop);
+	}
 	Char->SetActorLocation(FVector(Anchor.X, Anchor.Y, StartZ), false, nullptr,
 		ETeleportType::TeleportPhysics);
 
@@ -164,6 +208,10 @@ void UClimbComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 	ACharacter* Owner = Char;
 	APlayerController* PC = Cast<APlayerController>(Owner->GetController());
+	if (PC && bLockViewWhileClimbing && Ladder)
+	{
+		PC->SetControlRotation(Ladder->GetActorRotation());
+	}
 	float Axis = 0.f;
 	if (PC)
 	{
@@ -182,11 +230,42 @@ void UClimbComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		}
 	}
 
+	// The template keeps feeding WASD into the movement component. Clearing it every
+	// frame is what removes the "slippery / sliding down" feeling while attached.
+	Owner->GetCharacterMovement()->StopMovementImmediately();
+
 	// Only Z moves. X and Y stay pinned to the anchor plane: that is the real "sticking".
 	const float NewZ = FMath::Clamp(Owner->GetActorLocation().Z + Axis * ClimbSpeed * DeltaTime,
 		BottomZ, TopZ);
-	Owner->SetActorLocation(FVector(Anchor.X, Anchor.Y, NewZ), false, nullptr,
-		ETeleportType::TeleportPhysics);
+
+	// In the last VaultBlendHeight centimetres, slide from the climb anchor onto the
+	// ladder's own footprint. No teleport: the character drifts forward while rising.
+	FVector Target(Anchor.X, Anchor.Y, NewZ);
+	const float BlendStart = TopZ - FMath::Max(VaultBlendHeight, 1.f);
+	if (NewZ > BlendStart)
+	{
+		const float Alpha = FMath::Clamp((NewZ - BlendStart) / FMath::Max(VaultBlendHeight, 1.f), 0.f, 1.f);
+		Target.X = FMath::Lerp(Anchor.X, LadderTopLocation.X, Alpha);
+		Target.Y = FMath::Lerp(Anchor.Y, LadderTopLocation.Y, Alpha);
+	}
+
+	Owner->SetActorLocation(Target, false, nullptr, ETeleportType::TeleportPhysics);
+
+	// Feet are level with the top: stop climbing and let the character stand/fall naturally.
+	if (Axis > 0.f && NewZ >= TopZ - 1.f)
+	{
+		ReleaseLadder();
+		UE_LOG(LogTemp, Warning, TEXT("[Climb] reached the top"));
+		return;
+	}
+
+	// Feet are level with the bottom while still pushing down: step off the ladder.
+	if (Axis < 0.f && NewZ <= BottomZ + 1.f)
+	{
+		ReleaseLadder();
+		UE_LOG(LogTemp, Warning, TEXT("[Climb] reached the bottom"));
+		return;
+	}
 }
 
 ACharacter* UClimbComponent::GetOwnerCharacter() const
