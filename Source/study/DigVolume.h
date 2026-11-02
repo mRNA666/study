@@ -6,6 +6,8 @@
 #include "GameFramework/Actor.h"
 #include "DigVolume.generated.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogDig, Log, All);
+
 class UDynamicMeshComponent;
 UCLASS()
 class STUDY_API ADigVolume : public AActor

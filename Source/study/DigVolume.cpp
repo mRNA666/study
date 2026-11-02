@@ -6,6 +6,9 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/MeshNormals.h"
 #include "Generators/MarchingCubes.h"
+#include "HAL/PlatformTime.h"
+
+DEFINE_LOG_CATEGORY(LogDig);
 
 ADigVolume::ADigVolume()
 {
@@ -41,7 +44,7 @@ void ADigVolume::RebuildMesh()
 	const double Amp = NoiseAmplitudeCm;
 	const double Scale = NoiseScale;
 
-	auto StoneSDF = [H, Amp, Scale, &FBM](const FVector3d& P) -> double
+	auto StoneSDF = [H, Amp, Scale, FBM](const FVector3d& P) -> double
 		{
 			const FVector3d Q(FMath::Abs(P.X) - H,
 				FMath::Abs(P.Y) - H,
@@ -70,12 +73,17 @@ void ADigVolume::RebuildMesh()
 	MC.CubeSize = SampleStepCm;	
 	MC.bParallelCompute = false;
 	MC.bEnableValueCaching = false;
+	const double T0 = FPlatformTime::Seconds();
 	MC.Generate();
+	const double BuildMs = (FPlatformTime::Seconds() - T0) * 1000.0;
 	FDynamicMesh3 Mesh;
-	Mesh.Copy(&MC);
+	if (!Mesh.Copy(&MC)) {
+		UE_LOG(LogTemp, Error, TEXT("[Dig] Mesh,copy failed - MC produced no triangles"));
+		return;
+	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[Dig] MC verts=%d tris=%d step=%.1f amp=%.1f"),
-		Mesh.VertexCount(), Mesh.TriangleCount(), SampleStepCm, NoiseAmplitudeCm);
+	UE_LOG(LogTemp, Warning, TEXT("[Dig] MC verts=%d tris=%d step=%.1f amp=%.1f build=%.1f"),
+		Mesh.VertexCount(), Mesh.TriangleCount(), SampleStepCm, NoiseAmplitudeCm,BuildMs);
 
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
 
