@@ -18,7 +18,13 @@ public class study : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+
+			// Dynamic mesh / SDF digging:
+			//   GeometryCore      -> FDynamicMesh3, FMarchingCubes
+			//   GeometryFramework -> UDynamicMeshComponent
+			"GeometryCore",
+			"GeometryFramework"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
