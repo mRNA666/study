@@ -71,19 +71,23 @@ void ADigVolume::RebuildMesh()
 	MC.Bounds = FAxisAlignedBox3d(FVector3d(-H - Pad, -H - Pad, -H - Pad),
 	                              FVector3d(H + Pad, H + Pad, H + Pad));
 	MC.CubeSize = SampleStepCm;	
-	MC.bParallelCompute = false;
+	MC.bParallelCompute = true;
 	MC.bEnableValueCaching = false;
 	const double T0 = FPlatformTime::Seconds();
 	MC.Generate();
 	const double BuildMs = (FPlatformTime::Seconds() - T0) * 1000.0;
 	FDynamicMesh3 Mesh;
 	if (!Mesh.Copy(&MC)) {
-		UE_LOG(LogTemp, Error, TEXT("[Dig] Mesh,copy failed - MC produced no triangles"));
+		UE_LOG(LogDig, Error, TEXT("[Dig] Mesh,copy failed - MC produced no triangles"));
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[Dig] MC verts=%d tris=%d step=%.1f amp=%.1f build=%.1f"),
-		Mesh.VertexCount(), Mesh.TriangleCount(), SampleStepCm, NoiseAmplitudeCm,BuildMs);
+	UE_LOG(LogDig, Warning,
+		TEXT("[Dig] MC verts=%d tris=%d size=%.0f step=%.1f amp=%.1f scale=%.3f par=%d cache=%d build=%.1fms"),
+		Mesh.VertexCount(), Mesh.TriangleCount(),
+		SizeCm, SampleStepCm, NoiseAmplitudeCm, NoiseScale,
+		MC.bParallelCompute ? 1 : 0, MC.bEnableValueCaching ? 1 : 0,
+		BuildMs);
 
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
 
