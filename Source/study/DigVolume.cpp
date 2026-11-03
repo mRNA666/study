@@ -19,6 +19,14 @@ ADigVolume::ADigVolume()
 void ADigVolume::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	if (NoiseAmplitudeCm < 0.01f)
+	{
+		UE_LOG(LogDig, Warning, TEXT("[Dig] SDF center=%.2f face=%.2f out=%.2f corner=%.2f"),
+			EvalSDF(FVector3d(0, 0, 0)),
+			EvalSDF(FVector3d(50, 0, 0)),
+			EvalSDF(FVector3d(60, 0, 0)),
+			EvalSDF(FVector3d(60, 60, 60)));
+	}
 	RebuildMesh();
 }
 
@@ -27,50 +35,15 @@ void ADigVolume::RebuildMesh()
 	using namespace UE::Geometry;
 
 	const double H = SizeCm * 0.5;
-
-	auto FBM = [](const FVector3d& P, double Scale)->double
-	{
-			double Sum = 0.0, OctaveAmp = 1.0, Freq = 1.0;
-			for(int32 i=0;i<3;i++)
-			{
-				Sum += OctaveAmp * FMath::PerlinNoise3D(FVector(P.X * Scale * Freq,
-					P.Y * Scale * Freq,
-					P.Z * Scale * Freq));
-				OctaveAmp *= 0.5;
-				Freq *= 2.0;
-			}
-			return Sum;
-	};
 	const double Amp = NoiseAmplitudeCm;
-	const double Scale = NoiseScale;
-
-	auto StoneSDF = [H, Amp, Scale, FBM](const FVector3d& P) -> double
-		{
-			const FVector3d Q(FMath::Abs(P.X) - H,
-				FMath::Abs(P.Y) - H,
-				FMath::Abs(P.Z) - H);
-			const FVector3d Outside(FMath::Max(Q.X, 0.0),
-				FMath::Max(Q.Y, 0.0),
-				FMath::Max(Q.Z, 0.0));
-			const double Inside = FMath::Min(FMath::Max(Q.X, FMath::Max(Q.Y, Q.Z)), 0.0);
-			const double BoxDist = Outside.Length() + Inside;
-
-			return BoxDist + FBM(P, Scale) * Amp;
-		};
-
-
-	auto Field = [StoneSDF](const FVector3d& P) -> double
-	{
-		return -StoneSDF(P);
-	};
 
 	FMarchingCubes MC;
-	MC.Implicit = Field;
+	MC.Implicit = [this](const FVector3d& P) -> double { return -EvalSDF(P); };
 	MC.IsoValue = 0.0;
 	const double Pad = Amp * 2.0 + SampleStepCm * 2.0;
 	MC.Bounds = FAxisAlignedBox3d(FVector3d(-H - Pad, -H - Pad, -H - Pad),
-	                              FVector3d(H + Pad, H + Pad, H + Pad));
-	MC.CubeSize = SampleStepCm;	
+		FVector3d(H + Pad, H + Pad, H + Pad));
+	MC.CubeSize = SampleStepCm;
 	MC.bParallelCompute = true;
 	MC.bEnableValueCaching = false;
 	const double T0 = FPlatformTime::Seconds();
@@ -78,7 +51,7 @@ void ADigVolume::RebuildMesh()
 	const double BuildMs = (FPlatformTime::Seconds() - T0) * 1000.0;
 	FDynamicMesh3 Mesh;
 	if (!Mesh.Copy(&MC)) {
-		UE_LOG(LogDig, Error, TEXT("[Dig] Mesh,copy failed - MC produced no triangles"));
+		UE_LOG(LogDig, Error, TEXT("[Dig] Mesh.copy failed - MC produced no triangles"));
 		return;
 	}
 
@@ -91,6 +64,35 @@ void ADigVolume::RebuildMesh()
 
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
 
-	// ④ 交给组件
 	MeshComp->SetMesh(MoveTemp(Mesh));
+}
+double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
+{
+	double Sum = 0.0, OctaveAmp = 1.0, Freq = 1.0;
+	for (int32 i = 0;i < 3;i++)
+	{
+		Sum += OctaveAmp * FMath::PerlinNoise3D(FVector(P.X * Scale * Freq,
+			P.Y * Scale * Freq,
+			P.Z * Scale * Freq));
+		OctaveAmp *= 0.5;
+		Freq *= 2.0;
+	}
+	return Sum;
+}
+
+double ADigVolume::EvalSDF(const FVector3d& P) const
+{
+	const double H = SizeCm * 0.5;
+	const FVector3d Q(FMath::Abs(P.X) - H,
+		FMath::Abs(P.Y) - H,
+		FMath::Abs(P.Z) - H);
+	const FVector3d Outside(FMath::Max(Q.X, 0.0),
+		FMath::Max(Q.Y, 0.0),
+		FMath::Max(Q.Z, 0.0));
+	const double Inside = FMath::Min(FMath::Max(Q.X, FMath::Max(Q.Y, Q.Z)), 0.0);
+	const double BoxDist = Outside.Length() + Inside;
+
+	const double StoneDist = BoxDist + EvalFBM(P, NoiseScale) * NoiseAmplitudeCm;
+	const double SphereDist = (P - DigCenter).Length() - DigRadiusCm;
+	return FMath::Max(StoneDist, -SphereDist);
 }

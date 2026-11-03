@@ -31,10 +31,18 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float NoiseScale = 0.03f;
+
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	FVector DigCenter = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	float DigRadiusCm = 20.f;
+
 protected :
 	virtual void OnConstruction(const FTransform& Transform) override;
 	double EvalFBM(const FVector3d& P, double Scale) const;
 	double EvalSDF(const FVector3d& P) const;
 
 	void RebuildMesh();
+
 };
