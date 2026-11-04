@@ -83,16 +83,17 @@ double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
 double ADigVolume::EvalSDF(const FVector3d& P) const
 {
 	const double H = SizeCm * 0.5;
-	const FVector3d Q(FMath::Abs(P.X) - H,
-		FMath::Abs(P.Y) - H,
-		FMath::Abs(P.Z) - H);
-	const FVector3d Outside(FMath::Max(Q.X, 0.0),
-		FMath::Max(Q.Y, 0.0),
-		FMath::Max(Q.Z, 0.0));
+	const FVector3d Q(FMath::Abs(P.X) - H,FMath::Abs(P.Y) - H,FMath::Abs(P.Z) - H);
+	const FVector3d Outside(FMath::Max(Q.X, 0.0),FMath::Max(Q.Y, 0.0),FMath::Max(Q.Z, 0.0));
 	const double Inside = FMath::Min(FMath::Max(Q.X, FMath::Max(Q.Y, Q.Z)), 0.0);
 	const double BoxDist = Outside.Length() + Inside;
 
 	const double StoneDist = BoxDist + EvalFBM(P, NoiseScale) * NoiseAmplitudeCm;
-	const double SphereDist = (P - DigCenter).Length() - DigRadiusCm;
-	return FMath::Max(StoneDist, -SphereDist);
+	double Result = StoneDist;
+	for (const FDigHole& Hole : DigHoles)
+	{
+		const double SphereDist = (P - Hole.Center).Length() - Hole.RadiusCm;
+		Result = FMath::Max(Result, -SphereDist);
+	}
+	return Result;
 }

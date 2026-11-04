@@ -9,6 +9,19 @@
 DECLARE_LOG_CATEGORY_EXTERN(LogDig, Log, All);
 
 class UDynamicMeshComponent;
+
+USTRUCT(BlueprintType)
+struct FDigHole
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	FVector Center = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	float RadiusCm = 20.f;
+};
+
 UCLASS()
 class STUDY_API ADigVolume : public AActor
 {
@@ -33,10 +46,7 @@ public:
 	float NoiseScale = 0.03f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	FVector DigCenter = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DigRadiusCm = 20.f;
+	TArray<FDigHole> DigHoles;
 
 protected :
 	virtual void OnConstruction(const FTransform& Transform) override;
