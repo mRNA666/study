@@ -10,6 +10,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "study.h"
 
+DEFINE_LOG_CATEGORY(LogTemplateCharacter);
+
 AstudyCharacter::AstudyCharacter()
 {
 	// Set size for collision capsule
@@ -52,7 +54,8 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		// Jumping
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AstudyCharacter::DoJumpStart);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AstudyCharacter::DoJumpEnd);
-
+		// Digging
+		EnhancedInputComponent->BindAction(DigAction, ETriggerEvent::Started, this, &AstudyCharacter::DoDig);
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AstudyCharacter::MoveInput);
 
@@ -117,4 +120,8 @@ void AstudyCharacter::DoJumpEnd()
 {
 	// pass StopJumping to the character
 	StopJumping();
+}
+void AstudyCharacter::DoDig()
+{
+	UE_LOG(LogTemplateCharacter, Warning, TEXT("DoDig!"));
 }

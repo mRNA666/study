@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -48,6 +48,10 @@ protected:
 	/** Mouse Look Input Action */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	class UInputAction* MouseLookAction;
+
+	/** Dig Input Action */
+	UPROPERTY(EditAnywhere, Category = "Input")
+	UInputAction* DigAction;
 	
 public:
 	AstudyCharacter();
@@ -75,6 +79,8 @@ protected:
 	/** Handles jump end inputs from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
+	/** 挖矿 */
+	void DoDig();
 
 protected:
 

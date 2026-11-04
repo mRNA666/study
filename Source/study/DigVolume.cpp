@@ -65,6 +65,9 @@ void ADigVolume::RebuildMesh()
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
 
 	MeshComp->SetMesh(MoveTemp(Mesh));
+
+	// 让射线/角色能撞到这块石头（默认不生成碰撞）
+	MeshComp->EnableComplexAsSimpleCollision();
 }
 double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
 {
