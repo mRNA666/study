@@ -55,4 +55,7 @@ protected :
 
 	void RebuildMesh();
 
+public:
+	/** 在世界坐标 WorldLocation 处挖一个半径 RadiusCm 的球洞，并重建网格 */
+	void DigAt(const FVector& WorldLocation, float RadiusCm);
 };

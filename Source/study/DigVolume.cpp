@@ -66,7 +66,10 @@ void ADigVolume::RebuildMesh()
 
 	MeshComp->SetMesh(MoveTemp(Mesh));
 
-	// 让射线/角色能撞到这块石头（默认不生成碰撞）
+	// 让射线/角色能撞到这块石头：UDynamicMeshComponent 默认是 NoCollision，必须显式打开
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	MeshComp->SetCollisionObjectType(ECC_WorldStatic);
+	MeshComp->SetCollisionResponseToAllChannels(ECR_Block);
 	MeshComp->EnableComplexAsSimpleCollision();
 }
 double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
@@ -99,4 +102,18 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 		Result = FMath::Max(Result, -SphereDist);
 	}
 	return Result;
+}
+
+void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
+{
+	// EvalSDF 里的 P 是"相对本 Actor 原点"的局部坐标，而射线给的是世界坐标。
+	// Actor 一旦移动或旋转，两种坐标就不一样了，所以必须先转换。
+	const FVector LocalPos = GetActorTransform().InverseTransformPosition(WorldLocation);
+
+	FDigHole NewHole;
+	NewHole.Center = LocalPos;
+	NewHole.RadiusCm = RadiusCm;
+	DigHoles.Add(NewHole);
+
+	RebuildMesh();
 }

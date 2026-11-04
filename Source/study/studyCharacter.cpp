@@ -8,6 +8,8 @@
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Engine/World.h"
+#include "DigVolume.h"
 #include "study.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -123,5 +125,33 @@ void AstudyCharacter::DoJumpEnd()
 }
 void AstudyCharacter::DoDig()
 {
-	UE_LOG(LogTemplateCharacter, Warning, TEXT("DoDig!"));
+	UCameraComponent* Cam = GetFirstPersonCameraComponent();
+	if (!Cam || !GetWorld())
+	{
+		return;
+	}
+
+	// Trace from camera along view direction, 10 m long (1000 cm)
+	const FVector Start = Cam->GetComponentLocation();
+	const FVector End   = Start + Cam->GetForwardVector() * 1000.f;
+
+	FHitResult Hit;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(DigTrace), false, this);
+
+	const bool bHit = GetWorld()->LineTraceSingleByChannel(
+		Hit, Start, End, ECC_Visibility, Params);
+
+	UE_LOG(LogTemplateCharacter, Warning,
+		TEXT("[Dig] hit=%d actor=%s loc=%s"),
+		bHit ? 1 : 0,
+		*GetNameSafe(Hit.GetActor()),
+		*Hit.ImpactPoint.ToString());
+
+	if (bHit)
+	{
+		if (ADigVolume* DigVolume = Cast<ADigVolume>(Hit.GetActor()))
+		{
+			DigVolume->DigAt(Hit.ImpactPoint, 20.f);
+		}
+	}
 }
