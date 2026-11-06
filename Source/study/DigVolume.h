@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Generators/MarchingCubes.h"
 #include "DigVolume.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDig, Log, All);
@@ -54,6 +55,9 @@ protected :
 	double EvalSDF(const FVector3d& P) const;
 
 	void RebuildMesh();
+
+	/** 复用的 MC 生成器：每次 Reset() 只清空不释放，内部数组容量得以保留，省掉反复分配 */
+	UE::Geometry::FMarchingCubes MarchingCubes;
 
 public:
 	/** 在世界坐标 WorldLocation 处挖一个半径 RadiusCm 的球洞，并重建网格 */

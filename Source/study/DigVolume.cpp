@@ -37,7 +37,11 @@ void ADigVolume::RebuildMesh()
 	const double H = SizeCm * 0.5;
 	const double Amp = NoiseAmplitudeCm;
 
-	FMarchingCubes MC;
+	// 复用成员 MC：Reset() 清空输出数组但保留容量，省掉每次重建的重新分配
+	// 注意：Generate() 内部的 BuildMesh() 是"追加"，不 Reset 的话每挖一次面数就翻倍
+	FMarchingCubes& MC = MarchingCubes;
+	MC.Reset();
+
 	MC.Implicit = [this](const FVector3d& P) -> double { return -EvalSDF(P); };
 	MC.IsoValue = 0.0;
 	const double Pad = Amp * 2.0 + SampleStepCm * 2.0;
@@ -46,31 +50,43 @@ void ADigVolume::RebuildMesh()
 	MC.CubeSize = SampleStepCm;
 	MC.bParallelCompute = true;
 	MC.bEnableValueCaching = false;
+
 	const double T0 = FPlatformTime::Seconds();
 	MC.Generate();
-	const double BuildMs = (FPlatformTime::Seconds() - T0) * 1000.0;
+	const double T1 = FPlatformTime::Seconds();
+
 	FDynamicMesh3 Mesh;
 	if (!Mesh.Copy(&MC)) {
 		UE_LOG(LogDig, Error, TEXT("[Dig] Mesh.copy failed - MC produced no triangles"));
 		return;
 	}
+	const double T2 = FPlatformTime::Seconds();
 
-	UE_LOG(LogDig, Warning,
-		TEXT("[Dig] MC verts=%d tris=%d size=%.0f step=%.1f amp=%.1f scale=%.3f par=%d cache=%d build=%.1fms"),
-		Mesh.VertexCount(), Mesh.TriangleCount(),
-		SizeCm, SampleStepCm, NoiseAmplitudeCm, NoiseScale,
-		MC.bParallelCompute ? 1 : 0, MC.bEnableValueCaching ? 1 : 0,
-		BuildMs);
+	const int32 VertCount = Mesh.VertexCount();
+	const int32 TriCount = Mesh.TriangleCount();
 
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
+	const double T3 = FPlatformTime::Seconds();
+
+	// 先关掉"网格变化时自动烘物理"，改成下面手动烘一次 —— 这样能把这 100+ms 单独计时
+	MeshComp->SetDeferredCollisionUpdatesEnabled(true, false);
 
 	MeshComp->SetMesh(MoveTemp(Mesh));
+	const double T4 = FPlatformTime::Seconds();
 
-	// 让射线/角色能撞到这块石头：UDynamicMeshComponent 默认是 NoCollision，必须显式打开
+	// 碰撞：组件默认是 NoCollision，必须每次重建都显式打开。
+	// EnableComplexAsSimpleCollision() 会顺带把整个网格烘成物理三角网格（就是这个卡顿的来源）
 	MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	MeshComp->SetCollisionObjectType(ECC_WorldStatic);
 	MeshComp->SetCollisionResponseToAllChannels(ECR_Block);
 	MeshComp->EnableComplexAsSimpleCollision();
+	const double T5 = FPlatformTime::Seconds();
+
+	UE_LOG(LogDig, Warning,
+		TEXT("[Dig] verts=%d tris=%d | MC=%.1f Copy=%.1f Normals=%.1f SetMesh=%.1f PhysX=%.1f | 总计=%.1fms | holes=%d"),
+		VertCount, TriCount,
+		(T1 - T0) * 1000.0, (T2 - T1) * 1000.0, (T3 - T2) * 1000.0,
+		(T4 - T3) * 1000.0, (T5 - T4) * 1000.0, (T5 - T0) * 1000.0, DigHoles.Num());
 }
 double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
 {
