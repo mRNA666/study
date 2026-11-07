@@ -38,7 +38,7 @@ public:
 	float SizeCm = 100.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float SampleStepCm = 2.f;
+	float SampleStepCm = 4.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float NoiseAmplitudeCm = 6.f;
@@ -55,6 +55,12 @@ protected :
 	double EvalSDF(const FVector3d& P) const;
 
 	void RebuildMesh();
+
+	/** 真正做物理烘焙（很贵，约 30ms@3cm），由计时器延迟调用，避免卡在点击那一帧 */
+	void FlushPhysics();
+
+	/** 延迟物理烘焙的计时器，每挖一次就重置 */
+	FTimerHandle PhysicsTimerHandle;
 
 	/** 复用的 MC 生成器：每次 Reset() 只清空不释放，内部数组容量得以保留，省掉反复分配 */
 	UE::Geometry::FMarchingCubes MarchingCubes;

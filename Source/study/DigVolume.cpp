@@ -7,6 +7,7 @@
 #include "DynamicMesh/MeshNormals.h"
 #include "Generators/MarchingCubes.h"
 #include "HAL/PlatformTime.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY(LogDig);
 
@@ -28,6 +29,14 @@ void ADigVolume::OnConstruction(const FTransform& Transform)
 			EvalSDF(FVector3d(60, 60, 60)));
 	}
 	RebuildMesh();
+
+	// 关卡加载 / 编辑器里改参数时立即烘焙，保证一进游戏就有碰撞可打。
+	// （游戏里挖洞走的是延迟烘焙，不走这里）
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PhysicsTimerHandle);
+	}
+	FlushPhysics();
 }
 
 void ADigVolume::RebuildMesh()
@@ -74,19 +83,35 @@ void ADigVolume::RebuildMesh()
 	MeshComp->SetMesh(MoveTemp(Mesh));
 	const double T4 = FPlatformTime::Seconds();
 
-	// 碰撞：组件默认是 NoCollision，必须每次重建都显式打开。
-	// EnableComplexAsSimpleCollision() 会顺带把整个网格烘成物理三角网格（就是这个卡顿的来源）
+	// 碰撞：组件默认是 NoCollision，属性要设，但**不在这里烘焙**
 	MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	MeshComp->SetCollisionObjectType(ECC_WorldStatic);
 	MeshComp->SetCollisionResponseToAllChannels(ECR_Block);
-	MeshComp->EnableComplexAsSimpleCollision();
+
+	// 把烘焙推迟到"挖掘停手 0.35 秒后"，每挖一次就重置计时器
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			PhysicsTimerHandle, this, &ADigVolume::FlushPhysics, 0.35f, false);
+	}
 	const double T5 = FPlatformTime::Seconds();
 
 	UE_LOG(LogDig, Warning,
-		TEXT("[Dig] verts=%d tris=%d | MC=%.1f Copy=%.1f Normals=%.1f SetMesh=%.1f PhysX=%.1f | 总计=%.1fms | holes=%d"),
+		TEXT("[Dig] verts=%d tris=%d | MC=%.1f Copy=%.1f Normals=%.1f SetMesh=%.1f | 总计=%.1fms | holes=%d | size=%.0f step=%.1f amp=%.1f | 物理烘焙已延后"),
 		VertCount, TriCount,
 		(T1 - T0) * 1000.0, (T2 - T1) * 1000.0, (T3 - T2) * 1000.0,
-		(T4 - T3) * 1000.0, (T5 - T4) * 1000.0, (T5 - T0) * 1000.0, DigHoles.Num());
+		(T4 - T3) * 1000.0, (T5 - T0) * 1000.0, DigHoles.Num(),
+		SizeCm, SampleStepCm, NoiseAmplitudeCm);
+}
+
+void ADigVolume::FlushPhysics()
+{
+	const double T0 = FPlatformTime::Seconds();
+
+	// 这里才是真正烘物理的地方：用整个网格生成 PhysX trimesh
+	MeshComp->EnableComplexAsSimpleCollision();
+
+	UE_LOG(LogDig, Warning, TEXT("[Dig] 物理烘焙 = %.1fms"), (FPlatformTime::Seconds() - T0) * 1000.0);
 }
 double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
 {
@@ -112,11 +137,28 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 
 	const double StoneDist = BoxDist + EvalFBM(P, NoiseScale) * NoiseAmplitudeCm;
 	double Result = StoneDist;
+
 	for (const FDigHole& Hole : DigHoles)
 	{
-		const double SphereDist = (P - Hole.Center).Length() - Hole.RadiusCm;
+		// 只有 |P-C| < R - Result 时，这个洞才可能把 Result 往上推。
+		// 用平方比较避免开根号；Result 单调变大，所以这个上界会越用越紧。
+		const double Limit = Hole.RadiusCm - Result;
+		if (Limit <= 0.0)
+		{
+			continue;
+		}
+
+		const FVector3d D = P - Hole.Center;
+		const double DistSq = D.SizeSquared();
+		if (DistSq >= Limit * Limit)
+		{
+			continue;
+		}
+
+		const double SphereDist = FMath::Sqrt(DistSq) - Hole.RadiusCm;
 		Result = FMath::Max(Result, -SphereDist);
 	}
+
 	return Result;
 }
 
