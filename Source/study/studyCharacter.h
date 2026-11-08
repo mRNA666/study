@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -79,8 +79,30 @@ protected:
 	/** Handles jump end inputs from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
-	/** 挖矿 */
+
+	/** 按下左键：检查冷却后挖一次，并启动"按住连挖"的计时器 */
 	void DoDig();
+
+	/** 计时器回调：按住左键时每 DigCooldownSeconds 挖一次（不再检查冷却） */
+	void DoDigRepeat();
+
+	/** 松开左键：停掉连挖计时器 */
+	void StopDigRepeat();
+
+	/** 真正执行一次挖掘（射线 + DigAt），不管冷却 */
+	void PerformDig();
+
+	/** 两次挖掘之间的最小间隔（秒）。必须大于物理烘焙的延迟（0.35 秒），否则碰撞会冻住 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	float DigCooldownSeconds = 0.5f;
+
+private:
+
+	/** 按住左键时的循环计时器 */
+	FTimerHandle DigRepeatHandle;
+
+	/** 上一次成功挖掘的时间（秒） */
+	double LastDigTime = -1000.0;
 
 protected:
 

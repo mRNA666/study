@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "studyCharacter.h"
 #include "Animation/AnimInstance.h"
@@ -56,8 +56,9 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		// Jumping
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AstudyCharacter::DoJumpStart);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AstudyCharacter::DoJumpEnd);
-		// Digging
+		// Digging：按下挖一次并开始连挖，松开停止
 		EnhancedInputComponent->BindAction(DigAction, ETriggerEvent::Started, this, &AstudyCharacter::DoDig);
+		EnhancedInputComponent->BindAction(DigAction, ETriggerEvent::Completed, this, &AstudyCharacter::StopDigRepeat);
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AstudyCharacter::MoveInput);
 
@@ -125,15 +126,58 @@ void AstudyCharacter::DoJumpEnd()
 }
 void AstudyCharacter::DoDig()
 {
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 冷却中：忽略这次（长按的循环计时器会自己再叫）
+	const double Now = World->GetTimeSeconds();
+	if (Now - LastDigTime < (double)DigCooldownSeconds)
+	{
+		return;
+	}
+	LastDigTime = Now;
+
+	PerformDig();
+
+	// 按住左键：每 DigCooldownSeconds 自动再挖一次
+	World->GetTimerManager().SetTimer(
+		DigRepeatHandle, this, &AstudyCharacter::DoDigRepeat, DigCooldownSeconds, /*bLoop*/ true);
+}
+
+void AstudyCharacter::DoDigRepeat()
+{
+	// 计时器回调：周期本身就等于冷却，所以这里不再检查
+	if (UWorld* World = GetWorld())
+	{
+		LastDigTime = World->GetTimeSeconds();
+	}
+	PerformDig();
+}
+
+void AstudyCharacter::StopDigRepeat()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DigRepeatHandle);
+	}
+}
+
+void AstudyCharacter::PerformDig()
+{
 	UCameraComponent* Cam = GetFirstPersonCameraComponent();
 	if (!Cam || !GetWorld())
 	{
 		return;
 	}
 
-	// Trace from camera along view direction, 10 m long (1000 cm)
+	// 挖掘射程：2 米（200 cm）。超出这个距离打不中，玩家必须走近才能挖
+	const float DigReachCm = 200.f;
+
 	const FVector Start = Cam->GetComponentLocation();
-	const FVector End   = Start + Cam->GetForwardVector() * 1000.f;
+	const FVector End   = Start + Cam->GetForwardVector() * DigReachCm;
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(DigTrace), false, this);
