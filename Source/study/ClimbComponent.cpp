@@ -1,4 +1,4 @@
-#include "ClimbComponent.h"
+﻿#include "ClimbComponent.h"
 
 #include "CollisionShape.h"
 #include "Components/CapsuleComponent.h"
@@ -40,7 +40,13 @@ void UClimbComponent::BindInput()
 	{
 		if (PC->InputComponent)
 		{
-			PC->InputComponent->BindKey(EKeys::E, IE_Pressed, this, &UClimbComponent::OnInteractPressed);
+			// 关键：默认 bConsumeInput = true，会把 E 键"吃掉"，
+			// 导致角色身上的其它 E 绑定（比如按 E 捡石头）收不到事件。
+			// 这里设成 false，让事件继续往下传。
+			FInputKeyBinding& KeyBinding =
+				PC->InputComponent->BindKey(EKeys::E, IE_Pressed, this, &UClimbComponent::OnInteractPressed);
+			KeyBinding.bConsumeInput = false;
+
 			UE_LOG(LogTemp, Log, TEXT("[Climb] E bound on %s"), *PC->GetName());
 		}
 	}

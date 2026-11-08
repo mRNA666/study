@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -56,6 +56,22 @@ protected:
 public:
 	AstudyCharacter();
 
+	/** 当前负重（kg）。HUD / 蓝图都能读 */
+	UFUNCTION(BlueprintPure, Category = "Bag")
+	float GetCarriedWeightKg() const { return CarriedWeightKg; }
+
+	/** 背包容量（kg） */
+	UFUNCTION(BlueprintPure, Category = "Bag")
+	float GetMaxCarryKg() const { return MaxCarryKg; }
+
+	/** 当前负重比例 0~1（1 = 装满） */
+	UFUNCTION(BlueprintPure, Category = "Bag")
+	float GetLoadRatio() const { return (MaxCarryKg > 0.f) ? FMath::Clamp(CarriedWeightKg / MaxCarryKg, 0.f, 1.f) : 0.f; }
+
+	/** 准星当前对准的掉落物。没有对准任何石头时是 nullptr（HUD 用它来显示信息） */
+	UFUNCTION(BlueprintPure, Category = "Bag")
+	ADropItem* GetFocusedDrop() const { return FocusedDrop; }
+
 protected:
 
 	/** Called from Input Actions for movement input */
@@ -96,13 +112,52 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float DigCooldownSeconds = 0.5f;
 
+	// ---------------- 背包 ----------------
+
+	/** 当前背着的重量（kg） */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bag")
+	float CarriedWeightKg = 0.f;
+
+	/** 背包容量（kg）。超过这个重量就装不进去了 */
+	UPROPERTY(EditAnywhere, Category = "Bag")
+	float MaxCarryKg = 50.f;
+
+	/** 装满时的移速倍率（PRD：满包移速 60%） */
+	UPROPERTY(EditAnywhere, Category = "Bag")
+	float FullLoadSpeedScale = 0.6f;
+
+	/** 准星识别的最大距离（cm）。和挖掘射程（200cm）保持一致；超出这个距离按 E 也捡不到 */
+	UPROPERTY(EditAnywhere, Category = "Bag")
+	float FocusReachCm = 200.f;
+
 private:
+
+	/** 准星当前对准的掉落物 */
+	UPROPERTY()
+	TObjectPtr<ADropItem> FocusedDrop;
 
 	/** 按住左键时的循环计时器 */
 	FTimerHandle DigRepeatHandle;
 
 	/** 上一次成功挖掘的时间（秒） */
 	double LastDigTime = -1000.0;
+
+	/** 空手时的最大移速（构造时从移动组件读出来存着） */
+	float BaseMaxWalkSpeed = 600.f;
+
+	/** 每帧从相机发射线，更新"准星对准的掉落物" */
+	void UpdateFocus();
+
+	/** 按 E 时调用：优先捡准星对准的那块，没有就捡附近最近的 */
+	void TryPickup();
+
+	/** 按当前负重更新移速 */
+	void UpdateSpeedPenalty();
+
+protected:
+
+	/** 每帧更新准星焦点 */
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
 
