@@ -12,6 +12,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "DigVolume.h"
 #include "DropItem.h"
+#include "studyGameState.h"
 #include "study.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -232,6 +233,16 @@ void AstudyCharacter::DoDig()
 		return;
 	}
 
+	// 只有"进行中"阶段才能挖。准备阶段和结算之后按左键不生效。
+	// 取不到我们的 GameState 时（比如在别的测试地图里跑）不拦截，保持原行为。
+	if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
+	{
+		if (GS->GetPhase() != EGamePhase::InProgress)
+		{
+			return;
+		}
+	}
+
 	// 冷却中：忽略这次（长按的循环计时器会自己再叫）
 	const double Now = World->GetTimeSeconds();
 	if (Now - LastDigTime < (double)DigCooldownSeconds)
@@ -249,11 +260,24 @@ void AstudyCharacter::DoDig()
 
 void AstudyCharacter::DoDigRepeat()
 {
-	// 计时器回调：周期本身就等于冷却，所以这里不再检查
-	if (UWorld* World = GetWorld())
+	UWorld* World = GetWorld();
+	if (!World)
 	{
-		LastDigTime = World->GetTimeSeconds();
+		return;
 	}
+
+	// 阶段变了（结算了）：停掉连挖，别让它一直空转
+	if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
+	{
+		if (GS->GetPhase() != EGamePhase::InProgress)
+		{
+			World->GetTimerManager().ClearTimer(DigRepeatHandle);
+			return;
+		}
+	}
+
+	// 计时器回调：周期本身就等于冷却，所以这里不再检查
+	LastDigTime = World->GetTimeSeconds();
 	PerformDig();
 }
 

@@ -10,6 +10,8 @@
 #include "HAL/PlatformTime.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
 #include "DropItem.h"
 
 DEFINE_LOG_CATEGORY(LogDig);
@@ -31,6 +33,15 @@ ADigVolume::ADigVolume()
 	PrimaryActorTick.bCanEverTick = false;
 	MeshComp = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("MeshComp"));
 	SetRootComponent(MeshComp);
+
+	// 默认掉落物指向蓝图子类 BP_DropItem（它是 ADropItem 的子类，模型和外观都在蓝图里配）。
+	// 用 FClassFinder 而不是 StaticClass()：外观是内容，不该写死在 C++ 里。
+	// static 保证整个进程只查一次。
+	static ConstructorHelpers::FClassFinder<ADropItem> DropItemBP(TEXT("/Game/Drop/BP_DropItem"));
+	if (DropItemBP.Succeeded())
+	{
+		DropItemClass = DropItemBP.Class;
+	}
 }
 void ADigVolume::OnConstruction(const FTransform& Transform)
 {
@@ -44,6 +55,15 @@ void ADigVolume::OnConstruction(const FTransform& Transform)
 			EvalSDF(FVector3d(60, 60, 60)));
 	}
 	RebuildMesh();
+
+	// 给网格套材质。
+	// 必须走代码：UDynamicMeshComponent 的材质存在内部 BaseMaterials 数组，
+	// 那个成员只标了 UPROPERTY()、没有 EditAnywhere，细节面板里没有材质槽，
+	// 编辑器视口里也拖不上去。
+	if (RockMaterial)
+	{
+		MeshComp->SetMaterial(0, RockMaterial);
+	}
 
 	// 关卡加载 / 编辑器里改参数时立即烘焙，保证一进游戏就有碰撞可打。
 	// （游戏里挖洞走的是延迟烘焙，不走这里）
@@ -247,12 +267,31 @@ void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 	default:                                             break;
 	}
 
+	// ③ 掷骰：这一下出矿还是出废石（DESIGN-dig §9.3）
+	//    敲空气（None）不掷骰 —— 挥空不该消耗一次运气
+	float Grade = 0.0f;
+	bool bIsOre = false;
+	if (Size != EDropSize::None)
+	{
+		const float Roll = FMath::FRand();
+		bIsOre = (Roll < OreChance);
+		if (bIsOre)
+		{
+			// Grade = Min + (Max - Min) * V^Skew
+			// V^2 让低含金更常见：一半的矿石落在 Min ~ Min+25% 区间，十分之一是富矿
+			const float V = FMath::FRand();
+			Grade = MinGrade + (MaxGrade - MinGrade) * FMath::Pow(V, GradeSkew);
+		}
+	}
+
 	UE_LOG(LogDig, Warning,
-		TEXT("[Drop] 半径=%.1f 实心比=%.0f%% 挖掉=%.0f/%.0f cm³ → %s | 重量=%.1f kg | 位置=%.1f,%.1f,%.1f"),
+		TEXT("[Drop] 半径=%.1f 实心比=%.0f%% 挖掉=%.0f/%.0f cm³ → %s | 重量=%.1f kg | %s 含金=%.0f%% | 位置=%.1f,%.1f,%.1f"),
 		RadiusCm, Ratio * 100.0, RemovedVolume, SphereVolume, SizeName, WeightKg,
+		Size == EDropSize::None ? TEXT("-") : (bIsOre ? TEXT("矿石") : TEXT("废石")),
+		Grade * 100.0f,
 		WorldLocation.X, WorldLocation.Y, WorldLocation.Z);
 
-	// ③ 生成实物
+	// ④ 生成实物
 	if (Size != EDropSize::None && DropItemClass)
 	{
 		if (UWorld* World = GetWorld())
@@ -272,10 +311,14 @@ void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 					(Size == EDropSize::Small)  ? DropSizeSmallCm :
 					(Size == EDropSize::Medium) ? DropSizeMediumCm : DropSizeLargeCm;
 
-				Drop->InitDrop(WeightKg, GoldContent, TargetSizeCm);
+				// 外观按"是不是矿"分：矿石偏暖，废石纯灰（DESIGN-dig §9.4）
+				UMaterialInterface* DropMat = bIsOre ? OreMaterial : RubbleMaterial;
 
-				UE_LOG(LogDig, Warning, TEXT("[Drop] 已生成 %s（%.1f kg，含金 %.0f%%）"),
-					*GetNameSafe(Drop), WeightKg, GoldContent * 100.0f);
+				Drop->InitDrop(WeightKg, Grade, TargetSizeCm, DropMat);
+
+				UE_LOG(LogDig, Warning, TEXT("[Drop] 已生成 %s（%.1f kg，%s，含金 %.0f%%）"),
+					*GetNameSafe(Drop), WeightKg,
+					bIsOre ? TEXT("矿石") : TEXT("废石"), Grade * 100.0f);
 			}
 		}
 	}

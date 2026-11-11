@@ -4,18 +4,20 @@
 #include "BagHUD.h"
 #include "studyCharacter.h"
 #include "DropItem.h"
+#include "studyGameState.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 
 namespace
 {
-	/** 含金系数 → 档位词（DESIGN-dig §7.6：用档位词而不是百分比，保住"看闪光点找矿"的玩法） */
+	/** 含金系数 → 档位词（DESIGN-dig §9.6：用档位词而不是百分比，保住"挖出来才知道"的赌感）
+	 *  阈值按 v0.3 的新分布重标：出矿概率 35%，出矿后含金系数按 V^2 偏斜，多数落在低段 */
 	FString GoldWord(float GoldContent)
 	{
-		if (GoldContent < 0.05f) { return TEXT("石渣"); }
-		if (GoldContent < 0.25f) { return TEXT("含金：微"); }
-		if (GoldContent < 0.55f) { return TEXT("含金：中"); }
+		if (GoldContent < 0.001f) { return TEXT("石渣"); }
+		if (GoldContent < 0.05f) { return TEXT("含金：微"); }
+		if (GoldContent < 0.14f) { return TEXT("含金：中"); }
 		return TEXT("含金：富");
 	}
 }
@@ -27,6 +29,49 @@ void ABagHUD::DrawHUD()
 	if (!Canvas)
 	{
 		return;
+	}
+
+	// ---------------- 顶部：对局阶段 + 倒计时 ----------------
+	// 放在取 Character 之前：就算暂时没有角色，也能看到对局状态
+	if (const UWorld* World = GetWorld())
+	{
+		if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
+		{
+			FString PhaseText;
+			FLinearColor PhaseColor = FLinearColor::White;
+
+			switch (GS->GetPhase())
+			{
+			case EGamePhase::WaitingToStart:
+				PhaseText = TEXT("准备中……");
+				PhaseColor = FLinearColor(1.f, 0.82f, 0.2f, 1.f);
+				break;
+
+			case EGamePhase::InProgress:
+			{
+				// 上取整：剩 0.4 秒时仍显示 0:01，不会提前跳到 0:00
+				const int32 Total = FMath::CeilToInt(GS->GetTimeRemaining());
+				PhaseText = FString::Printf(TEXT("剩余   %d:%02d"), Total / 60, Total % 60);
+				if (Total <= 30)
+				{
+					PhaseColor = FLinearColor(1.f, 0.3f, 0.2f, 1.f);	// 最后 30 秒变红
+				}
+				break;
+			}
+
+			case EGamePhase::Finished:
+				PhaseText = TEXT("时间到");
+				PhaseColor = FLinearColor(1.f, 0.55f, 0.1f, 1.f);
+				break;
+			}
+
+			const float PhaseFontScale = FontScale * 1.5f;
+			float PhaseW = 0.f, PhaseH = 0.f;
+			GetTextSize(PhaseText, PhaseW, PhaseH, nullptr, PhaseFontScale);
+			DrawText(PhaseText, PhaseColor,
+				Canvas->SizeX * 0.5f - PhaseW * 0.5f, 40.f,
+				nullptr, PhaseFontScale, /*bScalePosition*/ false);
+		}
 	}
 
 	const AstudyCharacter* Character = Cast<AstudyCharacter>(GetOwningPawn());

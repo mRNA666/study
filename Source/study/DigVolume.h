@@ -10,6 +10,7 @@
 DECLARE_LOG_CATEGORY_EXTERN(LogDig, Log, All);
 
 class UDynamicMeshComponent;
+class UMaterialInterface;
 class ADropItem;
 
 USTRUCT(BlueprintType)
@@ -35,6 +36,16 @@ public:
 	UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category = "Dig")
 	TObjectPtr<UDynamicMeshComponent> MeshComp;//组件成员
 
+	/**
+	 * 岩石材质。设了就会套到网格组件上；留空则显示引擎默认材质（灰格子）。
+	 *
+	 * 为什么必须有这个属性：UDynamicMeshComponent 的材质存在内部 BaseMaterials 数组里，
+	 * 那个成员只标了 UPROPERTY()，没有 EditAnywhere —— 所以细节面板里没有材质槽，
+	 * 视口里也拖不上去。只能由代码 SetMaterial 设置。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	TObjectPtr<UMaterialInterface> RockMaterial;
+
 	UPROPERTY(EditAnywhere,Category = "Dig")
 	float SizeCm = 100.0f;
 
@@ -50,20 +61,51 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	TArray<FDigHole> DigHoles;
 
-	/** 这块石头的含金系数 0~1。挖出来的所有块都继承它（见 DESIGN-dig §2.3） */
-	UPROPERTY(EditAnywhere, Category = "Dig")
-	float GoldContent = 0.f;
+	// ---------------- 挖矿产出（DESIGN-dig §9） ----------------
+	// 每一下挖成功都单独掷骰：出矿 or 出废石；出矿时含金系数再随机。
+	// 玩家看不见这些数，只能靠"挖十下出了几个矿"自己推断这块肥不肥。
+
+	/** 这一下出「矿石」的概率 0~1。玩家看不见 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
+	float OreChance = 0.35f;
+
+	/** 出矿时含金系数的下限 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
+	float MinGrade = 0.02f;
+
+	/** 出矿时含金系数的上限 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
+	float MaxGrade = 0.20f;
+
+	/** 分布偏斜：>1 = 低含金更多（更赌），<1 = 高含金更多 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0.1", ClampMax = "8"))
+	float GradeSkew = 2.5f;
+
+	/**
+	 * 岩层倍率（PRD §2.12）：土/砂砾 ×1、砂岩 ×2.5、页岩 ×5、花岗岩 ×9。
+	 * 只影响"这块石头值多少黄金"，不影响掉落概率和重量。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0"))
+	float RockMultiplier = 1.0f;
 
 	/** 挖下来的石头用哪个 Actor 类生成。留空则只打日志、不生成实物 */
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	TSubclassOf<ADropItem> DropItemClass;
 
+	/** 矿石外观：这一下掷骰出了矿时用（DESIGN-dig §9.4） */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	TObjectPtr<UMaterialInterface> OreMaterial;
+
+	/** 废石外观：这一下没出矿时用 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	TObjectPtr<UMaterialInterface> RubbleMaterial;
+
 	// 掉落物目标尺寸（最长边，厘米）。洞口直径是 40cm，石头要比它小。
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DropSizeSmallCm = 6.f;
+	float DropSizeSmallCm = 12.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DropSizeMediumCm = 18.f;
+	float DropSizeMediumCm = 22.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float DropSizeLargeCm = 32.f;

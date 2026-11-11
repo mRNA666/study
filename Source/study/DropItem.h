@@ -8,6 +8,7 @@
 
 class UStaticMeshComponent;
 class UStaticMesh;
+class UMaterialInterface;
 
 /**
  * 挖下来的一块石头。
@@ -41,10 +42,18 @@ public:
 	bool bIsRubble = false;
 
 	/**
+	 * 这块石头用什么材质。留空则用模型自带的（SM_Rock_A~D 里配的 M_Nat_Stone）。
+	 * 正常流程是由 ADigVolume 按"这座矿洞是什么岩层"传进来。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Drop")
+	TObjectPtr<UMaterialInterface> RockMaterial;
+
+	/**
 	 * 初始化一块掉落的石头。
 	 * @param InWeightKg      重量（kg）。同时作为物理质量，越重越难被踢飞
 	 * @param InGoldContent   含金系数 0~1
 	 * @param TargetSizeCm    目标尺寸（最长边，厘米）。不管源模型多大都会缩放到这个尺寸
+	 * @param InMaterial      材质（可选）。传 nullptr 就沿用模型自带的材质
 	 */
-	void InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm);
+	void InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm, UMaterialInterface* InMaterial = nullptr);
 };

@@ -4,6 +4,7 @@
 #include "DropItem.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
 
 ADropItem::ADropItem()
 {
@@ -30,7 +31,7 @@ ADropItem::ADropItem()
 	MeshComp->SetAngularDamping(4.0f);
 }
 
-void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm)
+void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm, UMaterialInterface* InMaterial)
 {
 	WeightKg = InWeightKg;
 	GoldContent = InGoldContent;
@@ -46,6 +47,17 @@ void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSize
 	{
 		const int32 Index = FMath::RandRange(0, RockMeshes.Num() - 1);
 		MeshComp->SetStaticMesh(RockMeshes[Index]);
+	}
+
+	// 材质：由生成者（ADigVolume）按"这座矿洞是什么岩层"传进来。
+	// 不把材质写死在 SM_Rock_A~D 上，是为了换岩层时只改一个引用，不用去改四个模型资产。
+	if (InMaterial)
+	{
+		RockMaterial = InMaterial;
+	}
+	if (RockMaterial)
+	{
+		MeshComp->SetMaterial(0, RockMaterial);
 	}
 
 	// --- 尺寸归一化 ---
