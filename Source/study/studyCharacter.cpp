@@ -113,19 +113,39 @@ void AstudyCharacter::TryPickup()
 
 	const float Added = Best->WeightKg;
 	const float Gold = Best->GoldContent;
+	const float GoldGrams = Best->GoldGrams;
 	const bool bRubble = Best->bIsRubble;
 
 	CarriedWeightKg += Added;
+	CarriedGoldGrams += GoldGrams;
 	Best->Destroy();
 
 	UpdateSpeedPenalty();
 
 	UE_LOG(LogTemplateCharacter, Warning,
-		TEXT("[Bag] 捡起 %.1f kg %s（含金 %.0f%%）→ %.1f / %.1f kg（%.0f%%）移速 x%.2f"),
-		Added, bRubble ? TEXT("石渣") : TEXT("矿石"), Gold * 100.0f,
+		TEXT("[Bag] 捡起 %.1f kg %s（含金 %.0f%%，值 %.2f g）→ %.1f / %.1f kg（%.0f%%）移速 x%.2f"),
+		Added, bRubble ? TEXT("石渣") : TEXT("矿石"), Gold * 100.0f, GoldGrams,
 		CarriedWeightKg, MaxCarryKg,
 		(CarriedWeightKg / MaxCarryKg) * 100.0f,
 		GetCharacterMovement()->MaxWalkSpeed / BaseMaxWalkSpeed);
+}
+
+float AstudyCharacter::UnloadAll()
+{
+	const float Delivered = CarriedGoldGrams;
+	if (CarriedWeightKg <= 0.f && Delivered <= 0.f)
+	{
+		return 0.f;
+	}
+
+	UE_LOG(LogTemplateCharacter, Warning,
+		TEXT("[Bag] 卸货：放下 %.1f kg，交回 %.2f g 黄金"), CarriedWeightKg, Delivered);
+
+	CarriedWeightKg = 0.f;
+	CarriedGoldGrams = 0.f;
+	UpdateSpeedPenalty();
+
+	return Delivered;
 }
 
 void AstudyCharacter::UpdateSpeedPenalty()

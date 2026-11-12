@@ -37,6 +37,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drop")
 	float GoldContent = 0.0f;
 
+	/** 这块石头值多少黄金（克）。生成时就算好，卸货时直接累加，避免各处在重复算公式 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drop")
+	float GoldGrams = 0.0f;
+
 	/** 是不是纯石渣（含金量太低，捡了只占重量） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drop")
 	bool bIsRubble = false;
@@ -54,6 +58,8 @@ public:
 	 * @param InGoldContent   含金系数 0~1
 	 * @param TargetSizeCm    目标尺寸（最长边，厘米）。不管源模型多大都会缩放到这个尺寸
 	 * @param InMaterial      材质（可选）。传 nullptr 就沿用模型自带的材质
+	 * @param InGoldGrams     这块石头值多少黄金（克）。由 ADigVolume 按公式算好传进来
 	 */
-	void InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm, UMaterialInterface* InMaterial = nullptr);
+	void InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm,
+		UMaterialInterface* InMaterial = nullptr, float InGoldGrams = 0.0f);
 };

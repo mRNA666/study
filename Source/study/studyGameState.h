@@ -41,6 +41,20 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	float TimeRemaining = 0.f;
 
+	/**
+	 * 每个玩家已交回的黄金克数。索引 = 玩家序号。
+	 * 现在单机只有索引 0；联机时改成按 PlayerState 映射。
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	TArray<float> PlayerGoldGrams;
+
+	/** 读某个玩家已交回的黄金（索引越界返回 0） */
+	UFUNCTION(BlueprintPure, Category = "Match")
+	float GetGoldGrams(int32 PlayerIndex) const;
+
+	/** 只在服务器调用：卸货时加分 */
+	void AddGoldGrams(int32 PlayerIndex, float Grams);
+
 	/** 读阶段。HUD / Character 用这个，不要直接碰成员变量 */
 	UFUNCTION(BlueprintPure, Category = "Match")
 	EGamePhase GetPhase() const { return Phase; }

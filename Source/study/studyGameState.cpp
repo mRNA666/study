@@ -48,6 +48,29 @@ void AstudyGameState::SetTimeRemaining(float NewRemaining)
 	TimeRemaining = FMath::Max(NewRemaining, 0.f);
 }
 
+void AstudyGameState::AddGoldGrams(int32 PlayerIndex, float Grams)
+{
+	if (!HasAuthority() || PlayerIndex < 0 || Grams <= 0.f)
+	{
+		return;
+	}
+
+	if (!PlayerGoldGrams.IsValidIndex(PlayerIndex))
+	{
+		PlayerGoldGrams.SetNum(PlayerIndex + 1);
+	}
+
+	PlayerGoldGrams[PlayerIndex] += Grams;
+
+	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卸货 +%.1f g，本局累计 %.1f g"),
+		PlayerIndex, Grams, PlayerGoldGrams[PlayerIndex]);
+}
+
+float AstudyGameState::GetGoldGrams(int32 PlayerIndex) const
+{
+	return PlayerGoldGrams.IsValidIndex(PlayerIndex) ? PlayerGoldGrams[PlayerIndex] : 0.f;
+}
+
 void AstudyGameState::OnRep_Phase()
 {
 	UE_LOG(LogTemp, Log, TEXT("[Match] 阶段 -> %s"), PhaseName(Phase));
@@ -59,4 +82,5 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 
 	DOREPLIFETIME(AstudyGameState, Phase);
 	DOREPLIFETIME(AstudyGameState, TimeRemaining);
+	DOREPLIFETIME(AstudyGameState, PlayerGoldGrams);
 }

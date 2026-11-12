@@ -68,6 +68,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Bag")
 	float GetLoadRatio() const { return (MaxCarryKg > 0.f) ? FMath::Clamp(CarriedWeightKg / MaxCarryKg, 0.f, 1.f) : 0.f; }
 
+	/** 当前背着的黄金克数 */
+	UFUNCTION(BlueprintPure, Category = "Bag")
+	float GetCarriedGoldGrams() const { return CarriedGoldGrams; }
+
+	/**
+	 * 卸货：清空背包重量与黄金，移速恢复。
+	 * @return 这次交回的黄金克数（包里没东西返回 0）
+	 */
+	float UnloadAll();
+
 	/** 准星当前对准的掉落物。没有对准任何石头时是 nullptr（HUD 用它来显示信息） */
 	UFUNCTION(BlueprintPure, Category = "Bag")
 	ADropItem* GetFocusedDrop() const { return FocusedDrop; }
@@ -117,6 +127,10 @@ protected:
 	/** 当前背着的重量（kg） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bag")
 	float CarriedWeightKg = 0.f;
+
+	/** 当前背着的黄金克数（这些石头熔出来值多少）。卸货时结算 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bag")
+	float CarriedGoldGrams = 0.f;
 
 	/** 背包容量（kg）。超过这个重量就装不进去了 */
 	UPROPERTY(EditAnywhere, Category = "Bag")

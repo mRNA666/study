@@ -88,6 +88,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0"))
 	float RockMultiplier = 1.0f;
 
+	/** 每公斤满含金矿石能炼出多少克黄金（DESIGN-dig §9.5，默认 20） */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0"))
+	float GramsPerKgOre = 20.f;
+
+	/**
+	 * 剩余实体的最长边小于这个值（cm）就当作已经挖空。
+	 * 挖到最后会剩下一些噪声造成的孤立小碎渣，玩家打不着，表现为"永远挖不完"。
+	 * 设 0 = 永远保留（调试用）。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0"))
+	float DepletedSizeCm = 20.f;
+
 	/** 挖下来的石头用哪个 Actor 类生成。留空则只打日志、不生成实物 */
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	TSubclassOf<ADropItem> DropItemClass;
@@ -116,6 +128,23 @@ protected :
 	double EvalSDF(const FVector3d& P) const;
 
 	void RebuildMesh();
+
+	/**
+	 * 标记为"已挖空"：清空网格 + 关碰撞，后续挖掘直接忽略。
+	 * 两种情况会调用：MC 一个三角形都没生成；剩下的连通块小于 DepletedSizeCm。
+	 */
+	void MarkDepleted();
+
+	/** 已经挖空（网格为空） */
+	bool bDepleted = false;
+
+	/**
+	 * 上一次保留的连通块包围盒中心。
+	 * 用来稳定"哪一块是主体"：单纯选"三角形最多的"，挖的过程中会来回跳，
+	 * 上一帧被删掉的碎块就会在下一帧重新出现。
+	 */
+	FVector LastKeptCenter = FVector::ZeroVector;
+	bool bHasLastKeptCenter = false;
 
 	/** 真正做物理烘焙（很贵，约 30ms@3cm），由计时器延迟调用，避免卡在点击那一帧 */
 	void FlushPhysics();

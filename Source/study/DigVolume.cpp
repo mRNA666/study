@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "DigVolume.h"
@@ -54,6 +54,10 @@ void ADigVolume::OnConstruction(const FTransform& Transform)
 			EvalSDF(FVector3d(60, 0, 0)),
 			EvalSDF(FVector3d(60, 60, 60)));
 	}
+	// 重新评估：构造 / 改参数后允许再次挖掘，并重置"主体追踪"
+	bDepleted = false;
+	bHasLastKeptCenter = false;
+
 	RebuildMesh();
 
 	// 给网格套材质。
@@ -101,45 +105,111 @@ void ADigVolume::RebuildMesh()
 
 	FDynamicMesh3 Mesh;
 	if (!Mesh.Copy(&MC)) {
-		UE_LOG(LogDig, Error, TEXT("[Dig] Mesh.copy failed - MC produced no triangles"));
+		// MC 一个三角形都没生成 —— 整个采样区域里没有"实体"了，说明石头被挖光。
+		//
+		// ⚠️ 这里绝对不能只 return：一旦 return，网格组件会保留上一次的网格，
+		//    表现就是"挖到最后还剩一小块，而且它在别的地方"。必须显式清空。
+		MarkDepleted();
 		return;
 	}
 	const double T2 = FPlatformTime::Seconds();
 
-	// ---- 只保留最大的连通块，删掉被挖断后浮在空中的碎块 ----
-	// 说明：挖穿石头时，被切断的小块会变成互不相连的壳，MC 照样会把它画出来。
-	// 这里按"边连通"分块，只留三角形最多的那一块，其余全删。
+	// ---- 选"主体"，删掉被挖断后浮在空中的碎块 ----
+	//
+	// 为什么不能简单选"三角形最多的那块"：
+	//   挖的过程中两块的大小会交替，主体一跳，上一帧被删掉的碎块就会在下一帧
+	//   "凭空出现"——因为每帧都是从 MC 重新生成全量网格，删除本身不是持久的。
+	// 所以改成"离上一帧主体中心最近的那块"，让选择在时间上连续。
 	int32 RemovedChunks = 0;
 	int32 RemovedTris = 0;
 	{
 		FMeshConnectedComponents Comp(&Mesh);
 		Comp.FindConnectedTriangles();
 
-		if (Comp.Num() > 1)
+		const int32 NumComp = Comp.Num();
+		if (NumComp > 0)
 		{
-			const int32 KeepIndex = Comp.GetLargestIndexByCount();
-
-			// 先把要删的三角形 ID 全部收集起来，再统一删。
-			// （RemoveTriangle 只删单个，没有批量接口；删之前收集，避免边删边遍历）
-			TArray<int32> ToRemove;
-			for (int32 ci = 0; ci < Comp.Num(); ++ci)
+			// 先给每块算一个包围盒（顺便得到它的中心）
+			TArray<FBox> Boxes;
+			Boxes.SetNum(NumComp);
+			for (int32 ci = 0; ci < NumComp; ++ci)
 			{
-				if (ci == KeepIndex)
+				FBox B(ForceInit);
+				for (int32 tid : Comp.GetComponent(ci).Indices)
 				{
-					continue;
+					const FIndex3i Tri = Mesh.GetTriangle(tid);
+					B += Mesh.GetVertex(Tri.A);
+					B += Mesh.GetVertex(Tri.B);
+					B += Mesh.GetVertex(Tri.C);
 				}
-				RemovedChunks++;
-				ToRemove.Append(Comp.GetComponent(ci).Indices);
+				Boxes[ci] = B;
 			}
 
-			for (int32 tid : ToRemove)
+			// 选主体：有历史 → 追最近的一块；没有 → 取三角形最多的
+			int32 KeepIndex = 0;
+			if (bHasLastKeptCenter)
 			{
-				Mesh.RemoveTriangle(tid, /*bRemoveIsolatedVertices*/ false, /*bPreserveManifold*/ false);
+				double BestDistSq = TNumericLimits<double>::Max();
+				for (int32 ci = 0; ci < NumComp; ++ci)
+				{
+					if (!Boxes[ci].IsValid)
+					{
+						continue;
+					}
+					const double D = FVector::DistSquared(Boxes[ci].GetCenter(), LastKeptCenter);
+					if (D < BestDistSq)
+					{
+						BestDistSq = D;
+						KeepIndex = ci;
+					}
+				}
 			}
-			RemovedTris = ToRemove.Num();
+			else
+			{
+				KeepIndex = Comp.GetLargestIndexByCount();
+			}
 
-			// 清掉删三角形后留下的孤立顶点
-			Mesh.CompactInPlace();
+			const FBox& KeepBox = Boxes[KeepIndex];
+			bHasLastKeptCenter = (KeepBox.IsValid != 0);
+			if (KeepBox.IsValid)
+			{
+				LastKeptCenter = KeepBox.GetCenter();
+			}
+
+			// 只剩一个打不着的小碎渣 → 当作挖空
+			// （噪声会让表面起起伏伏，挖到最后经常在角落里剩一小块孤立实体）
+			const double KeepMaxDim = KeepBox.IsValid ? KeepBox.GetSize().GetMax() : 0.0;
+			if (DepletedSizeCm > 0.f && KeepMaxDim <= static_cast<double>(DepletedSizeCm))
+			{
+				RemovedTris = Mesh.TriangleCount();
+				MarkDepleted();
+				return;
+			}
+
+			if (NumComp > 1)
+			{
+				// 先把要删的三角形 ID 全部收集起来，再统一删。
+				// （RemoveTriangle 只删单个，没有批量接口；删之前收集，避免边删边遍历）
+				TArray<int32> ToRemove;
+				for (int32 ci = 0; ci < NumComp; ++ci)
+				{
+					if (ci == KeepIndex)
+					{
+						continue;
+					}
+					RemovedChunks++;
+					ToRemove.Append(Comp.GetComponent(ci).Indices);
+				}
+
+				for (int32 tid : ToRemove)
+				{
+					Mesh.RemoveTriangle(tid, /*bRemoveIsolatedVertices*/ false, /*bPreserveManifold*/ false);
+				}
+				RemovedTris = ToRemove.Num();
+
+				// 清掉删三角形后留下的孤立顶点
+				Mesh.CompactInPlace();
+			}
 		}
 	}
 	const double T2b = FPlatformTime::Seconds();
@@ -176,6 +246,31 @@ void ADigVolume::RebuildMesh()
 		(T3 - T2b) * 1000.0, (T4 - T3) * 1000.0, (T5 - T0) * 1000.0,
 		DigHoles.Num(), RemovedChunks, RemovedTris,
 		SizeCm, SampleStepCm, NoiseAmplitudeCm);
+}
+
+void ADigVolume::MarkDepleted()
+{
+	if (bDepleted)
+	{
+		return;
+	}
+	bDepleted = true;
+
+	UE_LOG(LogDig, Warning, TEXT("[Dig] 石头挖空（holes=%d），清空网格"), DigHoles.Num());
+
+	// 先关掉"网格变化自动烘物理"，否则会拿空网格去烘一次
+	MeshComp->SetDeferredCollisionUpdatesEnabled(true, false);
+
+	UE::Geometry::FDynamicMesh3 EmptyMesh;
+	MeshComp->SetMesh(MoveTemp(EmptyMesh));
+
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// 取消还在排队的延迟烘焙
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PhysicsTimerHandle);
+	}
 }
 
 void ADigVolume::FlushPhysics()
@@ -238,6 +333,12 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 
 void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 {
+	// 已经挖空：不再接受挖掘（洞列表也不再增长）
+	if (bDepleted)
+	{
+		return;
+	}
+
 	// EvalSDF 里的 P 是"相对本 Actor 原点"的局部坐标，而射线给的是世界坐标。
 	// Actor 一旦移动或旋转，两种坐标就不一样了，所以必须先转换。
 	const FVector LocalPos = GetActorTransform().InverseTransformPosition(WorldLocation);
@@ -314,11 +415,15 @@ void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 				// 外观按"是不是矿"分：矿石偏暖，废石纯灰（DESIGN-dig §9.4）
 				UMaterialInterface* DropMat = bIsOre ? OreMaterial : RubbleMaterial;
 
-				Drop->InitDrop(WeightKg, Grade, TargetSizeCm, DropMat);
+				// 这块石头值多少黄金（DESIGN-dig §9.5）
+				//   黄金克数 = 重量(kg) × 含金系数 × 每公斤产金 × 岩层倍率
+				const float GoldGrams = static_cast<float>(WeightKg) * Grade * GramsPerKgOre * RockMultiplier;
 
-				UE_LOG(LogDig, Warning, TEXT("[Drop] 已生成 %s（%.1f kg，%s，含金 %.0f%%）"),
+				Drop->InitDrop(WeightKg, Grade, TargetSizeCm, DropMat, GoldGrams);
+
+				UE_LOG(LogDig, Warning, TEXT("[Drop] 已生成 %s（%.1f kg，%s，含金 %.0f%%，值 %.2f g）"),
 					*GetNameSafe(Drop), WeightKg,
-					bIsOre ? TEXT("矿石") : TEXT("废石"), Grade * 100.0f);
+					bIsOre ? TEXT("矿石") : TEXT("废石"), Grade * 100.0f, GoldGrams);
 			}
 		}
 	}

@@ -34,4 +34,22 @@ public:
 	/** 字体缩放 */
 	UPROPERTY(EditAnywhere, Category = "HUD")
 	float FontScale = 2.4f;
+
+	/** 卸货区标记：框线颜色 */
+	UPROPERTY(EditAnywhere, Category = "HUD|Zone")
+	FLinearColor ZoneEdgeColor = FLinearColor(1.f, 0.18f, 0.12f, 0.95f);
+
+	/** 卸货区标记：文字颜色 */
+	UPROPERTY(EditAnywhere, Category = "HUD|Zone")
+	FLinearColor ZoneTextColor = FLinearColor(1.f, 0.35f, 0.2f, 1.f);
+
+private:
+	/** 画所有卸货区的红框和"卸货区"标签（屏幕空间投影，不需要任何资产） */
+	void DrawUnloadZones();
+
+	/** 卸货区缓存。每 2 秒重扫一次，避免每帧 GetAllActorsOfClass */
+	TArray<TWeakObjectPtr<class AActor>> CachedZones;
+
+	/** 下一次重扫的时间（世界时间秒） */
+	double NextZoneScanTime = 0.0;
 };

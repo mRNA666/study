@@ -31,10 +31,12 @@ ADropItem::ADropItem()
 	MeshComp->SetAngularDamping(4.0f);
 }
 
-void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm, UMaterialInterface* InMaterial)
+void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSizeCm,
+	UMaterialInterface* InMaterial, float InGoldGrams)
 {
 	WeightKg = InWeightKg;
 	GoldContent = InGoldContent;
+	GoldGrams = InGoldGrams;
 	bIsRubble = (GoldContent < 0.05f);
 
 	// 运行时再强制设一次"不挡玩家"。
