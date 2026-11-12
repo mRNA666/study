@@ -72,6 +72,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
 	bool bHideBody = false;
 
+	/**
+	 * 第几天之后才出现（0 = 一直都在）。
+	 * 手动摆的正规买家填 2：第 1 天会自己藏起来、也交互不到。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
+	int32 MinDay = 0;
+
 	UFUNCTION(BlueprintPure, Category = "Merchant")
 	bool IsInRange(const AActor* Other) const;
 
@@ -91,6 +98,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 	/** 把玩家的金重按黑市价卖出指定克数 */
 	void SellGold(float Grams);

@@ -7,6 +7,7 @@
 #include "studyGameState.h"
 #include "studyGameMode.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 
 namespace
@@ -24,29 +25,45 @@ AMerchant::AMerchant()
 	Body = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Body"));
 	SetRootComponent(Body);
 
+	// 模型在构造函数里就指定 —— 这样在编辑器的视口里也能看见，方便手动摆放。
+	// （之前是在 BeginPlay 里 LoadObject，编辑器里就只有一个空组件）
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(
+		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"));
+
+	if (MannyMesh.Succeeded())
+	{
+		Body->SetSkeletalMeshAsset(MannyMesh.Object);
+	}
+
 	// 挡路用：玩家不能从商人身体里穿过去
 	Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	Body->SetCollisionResponseToAllChannels(ECR_Block);
+}
+
+void AMerchant::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	// 床不显示机器人：在编辑器里勾了 bHideBody 就立刻生效
+	if (Body)
+	{
+		Body->SetVisibility(!bHideBody);
+	}
 }
 
 void AMerchant::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 白色机器人模型（UE 自带）
-	if (Body && !Body->GetSkeletalMeshAsset() && !bHideBody)
+	// 手动摆的正规买家：没到日子就藏起来（也交互不到）
+	if (MinDay > 0)
 	{
-		if (USkeletalMesh* Manny = LoadObject<USkeletalMesh>(nullptr,
-			TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")))
+		UstudyGameInstance* GI = GetRun(this);
+		if (GI && GI->DayIndex < MinDay)
 		{
-			Body->SetSkeletalMeshAsset(Manny);
+			SetActorHiddenInGame(true);
+			SetActorEnableCollision(false);
 		}
-	}
-
-	// 床这种自己另有外观的，把机器人藏掉
-	if (Body && bHideBody)
-	{
-		Body->SetVisibility(false);
 	}
 }
 
@@ -63,7 +80,7 @@ bool AMerchant::IsInRange(const AActor* Other) const
 
 bool AMerchant::Interact(AstudyCharacter* Character)
 {
-	if (!Character || !IsInRange(Character))
+	if (!Character || !IsInRange(Character) || IsHidden())
 	{
 		return false;
 	}

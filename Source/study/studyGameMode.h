@@ -43,6 +43,14 @@ protected:
 	/** 营地：在出生点附近摆上两个商人（卖开采权 / 收黄金） */
 	void SpawnCampMerchants();
 
+	/**
+	 * 是否用代码自动摆营地 NPC。
+	 * 你在关卡里手动摆好之后把它关掉（BP_FirstPersonGameMode → 类默认值），
+	 * 否则会出现两份。
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Camp")
+	bool bAutoSpawnCampMerchants = false;
+
 	/** 昼夜：按游戏时钟调太阳和天光（只在营地） */
 	void UpdateDayNightLighting();
 

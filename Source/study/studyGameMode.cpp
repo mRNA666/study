@@ -115,7 +115,7 @@ void AstudyGameMode::BeginPlay()
 
 	EnsureWorldBasics();
 
-	if (MapName.Contains(TEXT("Camp")))
+	if (MapName.Contains(TEXT("Camp")) && bAutoSpawnCampMerchants)
 	{
 		SpawnCampMerchants();
 	}
