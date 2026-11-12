@@ -12,6 +12,7 @@ class USkeletalMeshComponent;
 class UCameraComponent;
 class USpotLightComponent;
 class UInputAction;
+class AMerchant;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -228,8 +229,80 @@ private:
 	/** 每帧从相机发射线，更新"准星对准的掉落物" */
 	void UpdateFocus();
 
+public:
+	// ---------------- 对话（NPC 界面） ----------------
+
+	/** 对话的两种形态：选项列表 / 数字输入 */
+	enum class EDialogMode : uint8
+	{
+		None,
+		Options,		// 列出几条选项，按 1/2/3 选
+		NumberInput		// 让玩家输入一个数字（比如卖多少克金）
+	};
+
+	bool IsDialogOpen() const { return DialogMode != EDialogMode::None; }
+	bool IsDialogNumberMode() const { return DialogMode == EDialogMode::NumberInput; }
+
+	const FString& GetDialogTitle() const { return DialogTitle; }
+	const FString& GetDialogBody() const { return DialogBody; }
+	const FString& GetDialogPrompt() const { return DialogPrompt; }
+	const FString& GetDialogInput() const { return DialogInput; }
+	const TArray<FString>& GetDialogOptions() const { return DialogOptions; }
+
+	/** 商人调用：记录这次对话的发起者（选项确认后回调它） */
+	void SetDialogMerchant(AMerchant* InMerchant) { DialogMerchant = InMerchant; }
+
+	/** 商人调用：弹一个"选项列表"对话框 */
+	void OpenOptionDialog(const FString& Title, const FString& Body, const TArray<FString>& Options);
+
+	/** 商人调用：弹一个"输入数字"对话框 */
+	void OpenNumberDialog(const FString& Title, const FString& Body, const FString& Prompt, float MaxValue);
+
+	/** 关闭对话 */
+	void CloseDialog();
+
+protected:
+	// ---------------- 对话内部状态 ----------------
+
+	EDialogMode DialogMode = EDialogMode::None;
+
+	FString DialogTitle;
+	FString DialogBody;
+	FString DialogPrompt;
+	FString DialogInput;			// 玩家已经敲进去的数字
+	float DialogMaxValue = 0.f;		// 输入上限（卖金用）
+
+	TArray<FString> DialogOptions;
+
+	/** 当前对话的发起者。选项确认后回调它 */
+	UPROPERTY()
+	TObjectPtr<AMerchant> DialogMerchant;
+
+	/** 数字键 0-9（只在对话打开时有意义） */
+	void OnDialogDigit(int32 Digit);
+	void DialogDigit0() { OnDialogDigit(0); }
+	void DialogDigit1() { OnDialogDigit(1); }
+	void DialogDigit2() { OnDialogDigit(2); }
+	void DialogDigit3() { OnDialogDigit(3); }
+	void DialogDigit4() { OnDialogDigit(4); }
+	void DialogDigit5() { OnDialogDigit(5); }
+	void DialogDigit6() { OnDialogDigit(6); }
+	void DialogDigit7() { OnDialogDigit(7); }
+	void DialogDigit8() { OnDialogDigit(8); }
+	void DialogDigit9() { OnDialogDigit(9); }
+
+	void DialogBackspace();
+	void DialogConfirm();
+	void DialogCancel();
+
+	/** 选第 Index 条选项（0 起） */
+	void DialogChoose(int32 Index);
+
 	/** 按 E 时调用：优先捡准星对准的那块，没有就捡附近最近的 */
 	void TryPickup();
+
+	/** 找一个在交互范围内的商人（没有就返回 nullptr） */
+	AMerchant* FindNearbyMerchant() const;
 
 	/** 按 R 时调用：结算之后重开一局（其他阶段无反应） */
 	void RequestRestart();

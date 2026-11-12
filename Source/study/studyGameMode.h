@@ -40,6 +40,9 @@ protected:
 	 */
 	void EnsureWorldBasics();
 
+	/** 营地：在出生点附近摆上两个商人（卖开采权 / 收黄金） */
+	void SpawnCampMerchants();
+
 	/** 第二天 20:00：结算（没卖掉的黄金按黑市价折算进现金） */
 	void EndMatch();
 };

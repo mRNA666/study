@@ -53,6 +53,13 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	int32 FinalCash = 0;
 
+	/** 本次开采按游戏时钟几点收工（0 = 不在矿里，HUD 不显示） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	float MineStopClockMinutes = 0.f;
+
+	float GetMineStopClock() const { return MineStopClockMinutes; }
+	void SetMineStopClock(float InMinutes) { MineStopClockMinutes = InMinutes; }
+
 	UFUNCTION(BlueprintPure, Category = "Match")
 	int32 GetDayIndex() const { return DayIndex; }
 

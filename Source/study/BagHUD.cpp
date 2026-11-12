@@ -61,6 +61,21 @@ void ABagHUD::DrawHUD()
 			DrawText(ClockText, FLinearColor(1.f, 0.95f, 0.82f, 1.f),
 				BoxX + BoxPadX, BoxY + BoxPadY, nullptr, ClockScale, /*bScalePosition*/ false);
 
+			// 在矿洞里：显示开采到几点收工
+			if (GS->GetMineStopClock() > 0.f)
+			{
+				const int32 StopMin = FMath::FloorToInt(GS->GetMineStopClock());
+				const FString MineText = FString::Printf(TEXT("开采至   %02d:%02d"), StopMin / 60, StopMin % 60);
+
+				const float MineScale = FontScale * 0.95f;
+				float MW = 0.f, MH = 0.f;
+				GetTextSize(MineText, MW, MH, nullptr, MineScale);
+
+				const float MY = BoxY + ClockH + BoxPadY * 2.f + 8.f;
+				DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.42f), ScreenX, MY, MW + BoxPadX * 2.f, MH + BoxPadY * 2.f);
+				DrawText(MineText, FLinearColor(1.f, 0.62f, 0.28f, 1.f), ScreenX + BoxPadX, MY + BoxPadY, nullptr, MineScale, false);
+			}
+
 			// 回营地时的一次性提示：这一趟从矿洞带回来多少黄金
 			if (GS->GetNoticeTimeLeft() > 0.f && GS->GetNoticeGoldGrams() > 0.f)
 			{
@@ -235,8 +250,134 @@ void ABagHUD::DrawHUD()
 	// ---------------- 结算面板 ----------------
 	DrawSettlement();
 
+	// ---------------- 商人对话框 ----------------
+	DrawDialog();
+
 	// ---------------- 卸货区标记（红框 + 中文标签） ----------------
 	DrawUnloadZones();
+}
+
+void ABagHUD::DrawDialog()
+{
+	const AstudyCharacter* Character = Cast<AstudyCharacter>(GetOwningPawn());
+	if (!Character || !Character->IsDialogOpen() || !Canvas)
+	{
+		return;
+	}
+
+	const float TitleScale = FontScale * 1.05f;
+	const float BodyScale = FontScale * 0.80f;
+	const float OptScale = FontScale * 0.90f;
+	const float Pad = 22.f;
+
+	auto Measure = [this](const FString& S, float Scale) -> FVector2D
+	{
+		float MW = 0.f, MH = 0.f;
+		GetTextSize(S, MW, MH, nullptr, Scale);
+		return FVector2D(MW, MH);
+	};
+
+	// ---- 先把内容拆成行 ----
+	TArray<FString> BodyLines;
+	Character->GetDialogBody().ParseIntoArray(BodyLines, TEXT("\n"), false);
+
+	const FVector2D TitleSz = Measure(Character->GetDialogTitle(), TitleScale);
+
+	float ContentW = TitleSz.X;
+	float ContentH = TitleSz.Y + 10.f;
+
+	TArray<FVector2D> BodySizes;
+	for (const FString& Line : BodyLines)
+	{
+		const FVector2D Sz = Measure(Line, BodyScale);
+		BodySizes.Add(Sz);
+		ContentW = FMath::Max(ContentW, Sz.X);
+		ContentH += Sz.Y + 2.f;
+	}
+	ContentH += 8.f;
+
+	TArray<FVector2D> OptSizes;
+	const TArray<FString>& Options = Character->GetDialogOptions();
+	for (int32 i = 0; i < Options.Num(); ++i)
+	{
+		const FString Line = FString::Printf(TEXT("%d.   %s"), i + 1, *Options[i]);
+		const FVector2D Sz = Measure(Line, OptScale);
+		OptSizes.Add(Sz);
+		ContentW = FMath::Max(ContentW, Sz.X);
+		ContentH += Sz.Y + 6.f;
+	}
+
+	// 数字输入模式
+	FString InputLine;
+	if (Character->IsDialogNumberMode())
+	{
+		InputLine = FString::Printf(TEXT("%s   %s_"), *Character->GetDialogPrompt(), *Character->GetDialogInput());
+		if (Character->GetDialogInput().IsEmpty())
+		{
+			InputLine = FString::Printf(TEXT("%s   _"), *Character->GetDialogPrompt());
+		}
+		const FVector2D Sz = Measure(InputLine, TitleScale);
+		ContentW = FMath::Max(ContentW, Sz.X);
+		ContentH += Sz.Y + 8.f;
+	}
+
+	// 底部提示
+	const FString Hint = Character->IsDialogNumberMode()
+		? TEXT("数字键输入 · 回车确认 · Esc 取消")
+		: TEXT("按 1 / 2 / 3 选择 · E 或 Esc 关闭");
+	const FVector2D HintSz = Measure(Hint, BodyScale * 0.9f);
+	ContentW = FMath::Max(ContentW, HintSz.X);
+	ContentH += HintSz.Y + 8.f;
+
+	const float PanelW = ContentW + Pad * 2.f;
+	const float PanelH = ContentH + Pad * 2.f;
+	const float PanelX = Canvas->SizeX * 0.5f - PanelW * 0.5f;
+	const float PanelY = Canvas->SizeY * 0.60f;
+
+	// ---- 背板 ----
+	DrawRect(FLinearColor(0.02f, 0.02f, 0.03f, 0.88f), PanelX, PanelY, PanelW, PanelH);
+	// 顶部标题条
+	const float TitleBarH = TitleSz.Y + 14.f;
+	DrawRect(FLinearColor(0.9f, 0.65f, 0.2f, 0.85f), PanelX, PanelY, PanelW, TitleBarH);
+	// 左侧强调条
+	DrawRect(FLinearColor(0.9f, 0.65f, 0.2f, 0.9f), PanelX, PanelY, 3.f, PanelH);
+
+	float CurY = PanelY + 7.f;
+	DrawText(Character->GetDialogTitle(), FLinearColor(0.08f, 0.06f, 0.03f, 1.f),
+		PanelX + Pad, CurY, nullptr, TitleScale, false);
+
+	CurY = PanelY + TitleBarH + 10.f;
+
+	// ---- 正文 ----
+	for (int32 i = 0; i < BodyLines.Num(); ++i)
+	{
+		DrawText(BodyLines[i], FLinearColor(0.78f, 0.80f, 0.85f, 1.f),
+			PanelX + Pad, CurY, nullptr, BodyScale, false);
+		CurY += BodySizes[i].Y + 2.f;
+	}
+
+	CurY += 8.f;
+
+	// ---- 数字输入 ----
+	if (Character->IsDialogNumberMode())
+	{
+		DrawText(InputLine, FLinearColor(1.f, 0.88f, 0.35f, 1.f),
+			PanelX + Pad, CurY, nullptr, TitleScale, false);
+		CurY += Measure(InputLine, TitleScale).Y + 8.f;
+	}
+
+	// ---- 选项 ----
+	for (int32 i = 0; i < Options.Num(); ++i)
+	{
+		const FString Line = FString::Printf(TEXT("%d.   %s"), i + 1, *Options[i]);
+		DrawText(Line, FLinearColor(0.95f, 0.92f, 0.80f, 1.f),
+			PanelX + Pad, CurY, nullptr, OptScale, false);
+		CurY += OptSizes[i].Y + 6.f;
+	}
+
+	// ---- 底部提示 ----
+	DrawText(Hint, FLinearColor(0.55f, 0.58f, 0.64f, 1.f),
+		PanelX + Pad, CurY + 2.f, nullptr, BodyScale * 0.9f, false);
 }
 
 void ABagHUD::DrawSettlement()

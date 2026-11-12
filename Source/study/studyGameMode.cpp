@@ -15,6 +15,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "MineGenerator.h"
+#include "Merchant.h"
+#include "GameFramework/PlayerStart.h"
+#include "EngineUtils.h"
 
 namespace
 {
@@ -100,7 +103,69 @@ void AstudyGameMode::BeginPlay()
 
 	EnsureWorldBasics();
 
+	if (MapName.Contains(TEXT("Camp")))
+	{
+		SpawnCampMerchants();
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("[Match] 开局：第 %d 天 %s"), GI->DayIndex, *FormatClock(GI->ClockMinutes));
+}
+
+void AstudyGameMode::SpawnCampMerchants()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 以关卡里的 PlayerStart 为基准摆商人；找不到就退回原点
+	FVector Origin = FVector::ZeroVector;
+	for (TActorIterator<APlayerStart> It(World); It; ++It)
+	{
+		Origin = It->GetActorLocation();
+		break;
+	}
+
+	auto SpawnOne = [World, Origin](EMerchantKind Kind, const TCHAR* InName, const FVector& Offset)
+	{
+		// 从目标点上方往下打一条射线，把商人放到地面上 ——
+		// PlayerStart 的高度不一定是地面（通常比地面高 1 米左右）。
+		FVector SpawnLoc = Origin + Offset;
+		{
+			const FVector TraceStart = SpawnLoc + FVector(0.f, 0.f, 300.f);
+			const FVector TraceEnd = SpawnLoc - FVector(0.f, 0.f, 2000.f);
+
+			FHitResult Hit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(CampMerchantDrop), false, nullptr);
+			if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+			{
+				SpawnLoc = Hit.ImpactPoint;
+			}
+		}
+
+		// 面朝 -Y，正好对着出生点方向
+		const FTransform Xf(FRotator(0.f, 180.f, 0.f), SpawnLoc);
+
+		AMerchant* M = World->SpawnActorDeferred<AMerchant>(
+			AMerchant::StaticClass(), Xf, nullptr, nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!M)
+		{
+			return;
+		}
+
+		M->Kind = Kind;
+		M->DisplayName = InName;
+		M->FinishSpawning(Xf);
+	};
+
+	// 一个卖开采权（你花钱下矿），一个收黄金（黑市价 65%）
+	SpawnOne(EMerchantKind::BuyMineRight, TEXT("矿长"), FVector(350.f, 250.f, 0.f));
+	SpawnOne(EMerchantKind::SellGold, TEXT("黑市金商"), FVector(-350.f, 250.f, 0.f));
+
+	UE_LOG(LogTemp, Log, TEXT("[Match] 营地商人已就位（基准点 %.0f,%.0f,%.0f）"),
+		Origin.X, Origin.Y, Origin.Z);
 }
 
 void AstudyGameMode::EnsureWorldBasics()
@@ -161,10 +226,31 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 		GS->SetClock(GI->ClockMinutes, GI->DayIndex);
 	}
 
-	// 最后一天 18:00 → 结算
+	// 最后一天 20:00 → 结算
 	if (GI->DayIndex >= UstudyGameInstance::TotalDays && GI->IsDayOver())
 	{
 		EndMatch();
+	}
+
+	// 矿洞里：开采倒计时，到点强制送回营地
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Mine")) && GI->MineTimeLeft > 0.f)
+	{
+		GI->MineTimeLeft -= DeltaSeconds;
+		GS->SetMineStopClock(GI->MineStopClockMinutes);
+
+		if (GI->MineTimeLeft <= 0.f)
+		{
+			GI->MineTimeLeft = 0.f;
+			GS->SetMineStopClock(0.f);
+
+			UE_LOG(LogTemp, Log, TEXT("[Mine] 开采时间到，强制送回营地"));
+			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		}
+	}
+	else if (GS->GetMineStopClock() != 0.f)
+	{
+		GS->SetMineStopClock(0.f);
 	}
 }
 

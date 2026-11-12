@@ -8,7 +8,9 @@ void UstudyGameInstance::ResetRun()
 	DayIndex = 1;
 	ClockMinutes = DayStartMinutes;
 	RightsBoughtToday = 0;
-	Cash = 0;
+	MineTimeLeft = 0.f;
+	MineStopClockMinutes = 0.f;
+	Cash = StartingCash;
 	GoldGrams = 0.f;
 	StashedGoldGrams = 0.f;
 	bRunFinished = false;

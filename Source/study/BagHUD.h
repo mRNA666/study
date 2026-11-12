@@ -46,6 +46,9 @@ private:
 	/** 结算面板：对局结束之后盖在屏幕中央 */
 	void DrawSettlement();
 
+	/** 商人的对话框（选项列表 / 数字输入） */
+	void DrawDialog();
+
 	/** 卸货区缓存。每 2 秒重扫一次，避免每帧 GetAllActorsOfClass */
 	TArray<TWeakObjectPtr<class AActor>> CachedZones;
 

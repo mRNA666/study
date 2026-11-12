@@ -16,6 +16,8 @@
 #include "studyGameState.h"
 #include "studyGameInstance.h"
 #include "Engine/OverlapResult.h"
+#include "Merchant.h"
+#include "EngineUtils.h"
 #include "study.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -262,11 +264,144 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 
 		// R：结算之后重开一局（其他阶段按了没反应）
 		PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &AstudyCharacter::RequestRestart);
+
+		// 对话：数字键选选项 / 输入数字，Enter 确认，Backspace 退格，Esc 取消
+		PlayerInputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &AstudyCharacter::DialogDigit0);
+		PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AstudyCharacter::DialogDigit1);
+		PlayerInputComponent->BindKey(EKeys::Two, IE_Pressed, this, &AstudyCharacter::DialogDigit2);
+		PlayerInputComponent->BindKey(EKeys::Three, IE_Pressed, this, &AstudyCharacter::DialogDigit3);
+		PlayerInputComponent->BindKey(EKeys::Four, IE_Pressed, this, &AstudyCharacter::DialogDigit4);
+		PlayerInputComponent->BindKey(EKeys::Five, IE_Pressed, this, &AstudyCharacter::DialogDigit5);
+		PlayerInputComponent->BindKey(EKeys::Six, IE_Pressed, this, &AstudyCharacter::DialogDigit6);
+		PlayerInputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &AstudyCharacter::DialogDigit7);
+		PlayerInputComponent->BindKey(EKeys::Eight, IE_Pressed, this, &AstudyCharacter::DialogDigit8);
+		PlayerInputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AstudyCharacter::DialogDigit9);
+		PlayerInputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AstudyCharacter::DialogConfirm);
+		PlayerInputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &AstudyCharacter::DialogBackspace);
+		PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AstudyCharacter::DialogCancel);
+	}
+}
+
+void AstudyCharacter::OpenOptionDialog(const FString& Title, const FString& Body, const TArray<FString>& Options)
+{
+	DialogMode = EDialogMode::Options;
+	DialogTitle = Title;
+	DialogBody = Body;
+	DialogOptions = Options;
+	DialogPrompt.Reset();
+	DialogInput.Reset();
+}
+
+void AstudyCharacter::OpenNumberDialog(const FString& Title, const FString& Body, const FString& Prompt, float MaxValue)
+{
+	DialogMode = EDialogMode::NumberInput;
+	DialogTitle = Title;
+	DialogBody = Body;
+	DialogPrompt = Prompt;
+	DialogMaxValue = FMath::Max(MaxValue, 0.f);
+	DialogOptions.Reset();
+	DialogInput.Reset();
+}
+
+void AstudyCharacter::CloseDialog()
+{
+	DialogMode = EDialogMode::None;
+	DialogTitle.Reset();
+	DialogBody.Reset();
+	DialogPrompt.Reset();
+	DialogInput.Reset();
+	DialogOptions.Reset();
+	DialogMerchant = nullptr;
+}
+
+void AstudyCharacter::OnDialogDigit(int32 Digit)
+{
+	if (DialogMode == EDialogMode::Options)
+	{
+		// 选项模式：1/2/3 直接选
+		if (Digit >= 1 && Digit <= DialogOptions.Num())
+		{
+			DialogChoose(Digit - 1);
+		}
+		return;
+	}
+
+	if (DialogMode == EDialogMode::NumberInput)
+	{
+		// 数字模式：往输入框里塞
+		if (DialogInput.Len() < 6)
+		{
+			DialogInput.AppendChar(static_cast<TCHAR>(TEXT('0') + Digit));
+		}
+	}
+}
+
+void AstudyCharacter::DialogBackspace()
+{
+	if (DialogMode != EDialogMode::NumberInput || DialogInput.IsEmpty())
+	{
+		return;
+	}
+
+	DialogInput.LeftChopInline(1);
+}
+
+void AstudyCharacter::DialogConfirm()
+{
+	if (DialogMode != EDialogMode::NumberInput)
+	{
+		return;
+	}
+
+	const float Value = FCString::Atof(*DialogInput);
+
+	// 先关对话再回调，避免回调里又开新对话被清掉
+	AMerchant* M = DialogMerchant;
+	CloseDialog();
+
+	if (M && Value > 0.f)
+	{
+		M->OnDialogNumber(this, Value);
+	}
+}
+
+void AstudyCharacter::DialogCancel()
+{
+	CloseDialog();
+}
+
+void AstudyCharacter::DialogChoose(int32 Index)
+{
+	if (DialogMode != EDialogMode::Options || !DialogOptions.IsValidIndex(Index))
+	{
+		return;
+	}
+
+	AMerchant* M = DialogMerchant;
+	CloseDialog();
+
+	if (M)
+	{
+		M->OnDialogOption(this, Index);
 	}
 }
 
 void AstudyCharacter::OnPickupPressed()
 {
+	// 对话开着的时候，E 只是关掉对话
+	if (IsDialogOpen())
+	{
+		CloseDialog();
+		return;
+	}
+
+	// 附近有商人：优先和他交互（营地里按 E 不该去捡石头）
+	if (AMerchant* Nearby = FindNearbyMerchant())
+	{
+		Nearby->Interact(this);
+		return;
+	}
+
 	TryPickup();
 
 	// 按住 E 连续捡：每 PickupInterval 秒尝试捡一块
@@ -276,6 +411,25 @@ void AstudyCharacter::OnPickupPressed()
 			PickupRepeatHandle, this, &AstudyCharacter::TryPickup,
 			FMath::Max(PickupInterval, 0.02f), /*bLoop*/ true);
 	}
+}
+
+AMerchant* AstudyCharacter::FindNearbyMerchant() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AMerchant> It(World); It; ++It)
+	{
+		if (It->IsInRange(this))
+		{
+			return *It;
+		}
+	}
+
+	return nullptr;
 }
 
 void AstudyCharacter::OnPickupReleased()

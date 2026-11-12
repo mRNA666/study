@@ -35,6 +35,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	int32 RightsBoughtToday = 0;
 
+	/** 本次下矿还剩多少【真实秒】。<= 0 表示不在矿里 */
+	UPROPERTY(BlueprintReadOnly, Category = "Run")
+	float MineTimeLeft = 0.f;
+
+	/** 这次开采按游戏时钟几点收工（给 HUD 显示"开采至 HH:MM"） */
+	UPROPERTY(BlueprintReadOnly, Category = "Run")
+	float MineStopClockMinutes = 0.f;
+
 	// ---------------- 资产 ----------------
 
 	/** 现金（币）。只有卖金才有 */
@@ -77,6 +85,12 @@ public:
 
 	/** 一局总共几天（现在是两天） */
 	static constexpr int32 TotalDays = 2;
+
+	/** 一次开采能挖多久（真实秒） */
+	static constexpr float MineDurationSeconds = 180.f;
+
+	/** 开局启动资金（币）。够买一次开采权，之后要靠卖金赚 */
+	static constexpr int32 StartingCash = 4000;
 
 	// ---------------- 操作 ----------------
 

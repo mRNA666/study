@@ -177,6 +177,7 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AstudyGameState, DayIndex);
 	DOREPLIFETIME(AstudyGameState, ClockMinutes);
 	DOREPLIFETIME(AstudyGameState, FinalCash);
+	DOREPLIFETIME(AstudyGameState, MineStopClockMinutes);
 	DOREPLIFETIME(AstudyGameState, NoticeGoldGrams);
 	DOREPLIFETIME(AstudyGameState, NoticeTimeLeft);
 }
