@@ -123,6 +123,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float DigCooldownSeconds = 0.5f;
 
+	/** 挖掘射程（cm）。从相机往前打射线，超出这个距离打不中 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	float DigReachCm = 230.f;
+
 	// ---------------- 头灯（矿洞全靠它） ----------------
 
 	/** 戴在相机上的矿灯 */
@@ -179,9 +183,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Bag")
 	float FullLoadSpeedScale = 0.6f;
 
-	/** 准星识别的最大距离（cm）。和挖掘射程（200cm）保持一致；超出这个距离按 E 也捡不到 */
+	/** 准星识别掉落物的最大距离（cm）。和挖掘射程（DigReachCm）保持一致；超出这个距离按 E 也捡不到 */
 	UPROPERTY(EditAnywhere, Category = "Bag")
-	float FocusReachCm = 200.f;
+	float FocusReachCm = 230.f;
 
 	/** 按住 E 时每隔多久捡一块（秒） */
 	UPROPERTY(EditAnywhere, Category = "Bag")

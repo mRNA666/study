@@ -446,8 +446,7 @@ void AstudyCharacter::PerformDig()
 		return;
 	}
 
-	// 挖掘射程：2 米（200 cm）。超出这个距离打不中，玩家必须走近才能挖
-	const float DigReachCm = 200.f;
+	// 挖掘射程由成员变量 DigReachCm 决定（默认 230cm，可在角色蓝图里调）
 
 	const FVector Start = Cam->GetComponentLocation();
 	const FVector End   = Start + Cam->GetForwardVector() * DigReachCm;
