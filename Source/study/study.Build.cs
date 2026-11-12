@@ -19,6 +19,7 @@ public class study : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
+			"SlateCore",
 
 			// Dynamic mesh / SDF digging:
 			//   GeometryCore      -> FDynamicMesh3, FMarchingCubes

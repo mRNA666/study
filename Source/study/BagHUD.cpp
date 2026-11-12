@@ -2,6 +2,7 @@
 
 
 #include "BagHUD.h"
+#include "StudyHUDWidget.h"
 #include "studyCharacter.h"
 #include "DropItem.h"
 #include "studyGameState.h"
@@ -27,9 +28,39 @@ namespace
 	}
 }
 
+void ABagHUD::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 全部 UI 都交给 UMG（Slate 排版，文字清晰）。
+	// Canvas 那套留着做兜底：万一 CreateWidget 失败，下面 DrawHUD 还会画。
+	if (PlayerOwner && !HUDWidget)
+	{
+		HUDWidget = CreateWidget<UStudyHUDWidget>(PlayerOwner, UStudyHUDWidget::StaticClass());
+		if (HUDWidget)
+		{
+			HUDWidget->AddToViewport(0);
+			UE_LOG(LogTemp, Log, TEXT("[HUD] UMG 版 HUD 已加载"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[HUD] UMG 版 HUD 创建失败，退回 Canvas 绘制"));
+		}
+	}
+}
+
 void ABagHUD::DrawHUD()
 {
 	Super::DrawHUD();
+
+	// UMG 接管之后，Canvas 完全不画
+	if (HUDWidget)
+	{
+		return;
+	}
+
+	float Dummy = 0.f;	// 保持下面的代码可达（避免 unreachable 警告）
+	(void)Dummy;
 
 	if (!Canvas)
 	{

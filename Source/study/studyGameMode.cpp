@@ -245,6 +245,10 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 			GS->SetMineStopClock(0.f);
 
 			UE_LOG(LogTemp, Log, TEXT("[Mine] 开采时间到，强制送回营地"));
+
+			// 走之前把背包里没交的黄金一起带走（不然玩家会"白挖"）
+			UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+
 			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
 		}
 	}

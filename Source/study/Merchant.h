@@ -17,7 +17,10 @@ enum class EMerchantKind : uint8
 	BuyMineRight UMETA(DisplayName = "卖开采权"),
 
 	/** 收黄金：把金重按黑市价换成现金 */
-	SellGold UMETA(DisplayName = "收黄金")
+	SellGold UMETA(DisplayName = "收黄金"),
+
+	/** 矿洞里的向导：提前返回 / 查看已存放的黄金 */
+	MineGuide UMETA(DisplayName = "矿洞向导")
 };
 
 /**
@@ -82,6 +85,14 @@ protected:
 	/** 把玩家的金重按黑市价卖出指定克数 */
 	void SellGold(float Grams);
 
-	/** 尝试买一次开采权并传送进矿洞 */
-	void BuyMineRight();
+	/** 尝试买一次开采权并传送进矿洞。返回 false = 钱不够 */
+	bool BuyMineRight();
+
+	/** 上一次买开采权是不是因为"钱不够"失败（用来在对话框上提示） */
+	UPROPERTY(Transient)
+	bool bBuyFailed = false;
+
+	/** 矿洞向导：玩家是不是刚点过"查看已存放"（点了才把数字写进正文） */
+	UPROPERTY(Transient)
+	bool bStashRevealed = false;
 };

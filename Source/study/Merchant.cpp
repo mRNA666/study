@@ -62,6 +62,7 @@ bool AMerchant::Interact(AstudyCharacter* Character)
 	}
 
 	Character->SetDialogMerchant(this);
+	bBuyFailed = false;
 	BuildDialog(Character);
 	return true;
 }
@@ -76,15 +77,37 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		return;
 	}
 
+	// ---- 矿洞向导 ----
+	if (Kind == EMerchantKind::MineGuide)
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		FString GuideBody = TEXT("要提前上去吗？还是再挖一会儿。");
+		if (bStashRevealed)
+		{
+			GuideBody += FString::Printf(TEXT("\n\n这里已经存放：%.1f g 黄金"), GI->StashedGoldGrams);
+			GuideBody += TEXT("\n回到营地会自动结算。");
+		}
+
+		TArray<FString> Options;
+		Options.Add(TEXT("我要提前返回营地"));
+		Options.Add(TEXT("这里已经放了多少黄金？"));
+
+		Character->OpenOptionDialog(DisplayName, GuideBody, Options);
+		return;
+	}
+
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
 		const int32 Estimate = FMath::RoundToInt(
 			GI->GoldGrams * AstudyGameState::BlackMarketRate * static_cast<float>(AstudyGameState::BasePricePerGram));
 
+		// 打开行内数字输入（框里填"卖多少克"）
+		Character->SetDialogNumberEnabled(GI->GoldGrams);
+
 		TArray<FString> Options;
 		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → 约 %d 币）"), GI->GoldGrams, Estimate));
-		Options.Add(TEXT("只卖一部分（自己输入克数）"));
 		Options.Add(TEXT("算了"));
 
 		Character->OpenOptionDialog(
@@ -95,7 +118,8 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		return;
 	}
 
-	// ---- 卖开采权 ----
+	// ---- 卖开采权（没有数字输入） ----
+	Character->SetDialogNumberEnabled(0.f);
 	const bool bSoldOut = (GI->RightsBoughtToday >= UstudyGameInstance::MaxMineRightsPerDay);
 
 	TArray<FString> Options;
@@ -110,11 +134,19 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		Options.Add(TEXT("不买了"));
 	}
 
-	Character->OpenOptionDialog(
-		DisplayName,
-		FString::Printf(TEXT("现金：%d 币\n今天已买 %d / %d 次\n一次能挖 3 分钟，到点自动送回营地"),
-			GI->Cash, GI->RightsBoughtToday, UstudyGameInstance::MaxMineRightsPerDay),
-		Options);
+	// 钱不够的提示写在正文最前面，一眼能看到
+	FString BuyBody;
+	if (bBuyFailed)
+	{
+		const int32 Short_ = FMath::Max(MineRightPrice - GI->Cash, 0);
+		BuyBody = FString::Printf(TEXT("⚠ 金钱不够！要 %d 币，你只有 %d 币（还差 %d）\n\n"),
+			MineRightPrice, GI->Cash, Short_);
+	}
+
+	BuyBody += FString::Printf(TEXT("现金：%d 币\n今天已买 %d / %d 次\n一次能挖 3 分钟，到点自动送回营地"),
+		GI->Cash, GI->RightsBoughtToday, UstudyGameInstance::MaxMineRightsPerDay);
+
+	Character->OpenOptionDialog(DisplayName, BuyBody, Options);
 }
 
 void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
@@ -125,27 +157,38 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		return;
 	}
 
+	// ---- 矿洞向导 ----
+	if (Kind == EMerchantKind::MineGuide)
+	{
+		if (Index == 0)
+		{
+			// 提前返回营地：清掉开采倒计时，免得刚回去又被强制传送
+			GI->MineTimeLeft = 0.f;
+			GI->MineStopClockMinutes = 0.f;
+
+			UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：提前返回营地"), *DisplayName);
+
+			// 走之前把背包里没交的黄金一起带走
+			UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+
+			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		}
+		else if (Index == 1)
+		{
+			bStashRevealed = true;
+			BuildDialog(Character);
+		}
+		return;
+	}
+
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
 		if (Index == 0)
 		{
 			SellGold(GI->GoldGrams);
-		}
-		else if (Index == 1)
-		{
-			if (GI->GoldGrams <= 0.f)
-			{
-				UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：你手上没有金重"), *DisplayName);
-				return;
-			}
-
-			Character->SetDialogMerchant(this);
-			Character->OpenNumberDialog(
-				DisplayName,
-				FString::Printf(TEXT("手上的金重：%.1f g"), GI->GoldGrams),
-				TEXT("卖出多少克？"),
-				GI->GoldGrams);
+			// 卖完重刷对话框，让"手上的金重"立刻反映新数值
+			BuildDialog(Character);
 		}
 		return;
 	}
@@ -162,14 +205,35 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		return;
 	}
 
-	BuyMineRight();
+	// 钱不够：标一下，让对话框弹提示
+	if (!BuyMineRight())
+	{
+		bBuyFailed = true;
+		BuildDialog(Character);
+	}
 }
 
 void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
 {
-	if (Kind == EMerchantKind::SellGold)
+	if (Kind != EMerchantKind::SellGold)
 	{
-		SellGold(Value);
+		return;
+	}
+
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI)
+	{
+		return;
+	}
+
+	// 输入比存量还大 → 直接按存量算（不用报错，玩家想卖完就该卖完）
+	const float Clamped = FMath::Clamp(Value, 0.f, GI->GoldGrams);
+	SellGold(Clamped);
+
+	// 重刷对话框（金重 / 现金 / 可卖数量都变了）
+	if (Character && Character->IsDialogOpen())
+	{
+		BuildDialog(Character);
 	}
 }
 
@@ -199,18 +263,18 @@ void AMerchant::SellGold(float Grams)
 		*DisplayName, Sold, Earned, GI->GoldGrams, GI->Cash);
 }
 
-void AMerchant::BuyMineRight()
+bool AMerchant::BuyMineRight()
 {
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI)
 	{
-		return;
+		return false;
 	}
 
 	if (GI->Cash < MineRightPrice)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：开采权要 %d 币，你只有 %d 币"), *DisplayName, MineRightPrice, GI->Cash);
-		return;
+		UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：金钱不够（要 %d，只有 %d）"), *DisplayName, MineRightPrice, GI->Cash);
+		return false;
 	}
 
 	GI->Cash -= MineRightPrice;
@@ -232,4 +296,5 @@ void AMerchant::BuyMineRight()
 		StartH, StartM, StopH, StopM);
 
 	UGameplayStatics::OpenLevel(this, FName(TEXT("Mine1")));
+	return true;
 }

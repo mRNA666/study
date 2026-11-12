@@ -17,6 +17,7 @@
 #include "studyGameInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Merchant.h"
+#include "LadderActor.h"
 #include "EngineUtils.h"
 #include "study.h"
 
@@ -131,7 +132,16 @@ void AstudyCharacter::UpdateFocus()
 	// 所以被岩石遮住的石头不会被"隔墙识别"。
 	if (World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
 	{
-		FocusedDrop = Cast<ADropItem>(Hit.GetActor());
+		AActor* HitActor = Hit.GetActor();
+		FocusedDrop = Cast<ADropItem>(HitActor);
+
+		// 准星指到梯子 → HUD 显示"按 E 爬梯"
+		bFocusingLadder = HitActor
+			&& (Cast<ALadderActor>(HitActor) != nullptr || HitActor->ActorHasTag(TEXT("Ladder")));
+	}
+	else
+	{
+		bFocusingLadder = false;
 	}
 }
 
@@ -265,6 +275,9 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		// R：结算之后重开一局（其他阶段按了没反应）
 		PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &AstudyCharacter::RequestRestart);
 
+		// T：开关头灯（矿洞里黑，和 E 分开一个键）
+		PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AstudyCharacter::ToggleHeadLight);
+
 		// 对话：数字键选选项 / 输入数字，Enter 确认，Backspace 退格，Esc 取消
 		PlayerInputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &AstudyCharacter::DialogDigit0);
 		PlayerInputComponent->BindKey(EKeys::One, IE_Pressed, this, &AstudyCharacter::DialogDigit1);
@@ -365,6 +378,18 @@ void AstudyCharacter::DialogConfirm()
 	}
 }
 
+void AstudyCharacter::DialogSubmitNumber(float Value)
+{
+	// 行内输入：不关对话 —— 让商人自己决定要不要重刷一遍内容
+	AMerchant* M = DialogMerchant;
+	if (!M || Value <= 0.f)
+	{
+		return;
+	}
+
+	M->OnDialogNumber(this, Value);
+}
+
 void AstudyCharacter::DialogCancel()
 {
 	CloseDialog();
@@ -386,22 +411,36 @@ void AstudyCharacter::DialogChoose(int32 Index)
 	}
 }
 
+void AstudyCharacter::ToggleHeadLight()
+{
+	if (!HeadLight)
+	{
+		return;
+	}
+
+	bHeadLightOn = !bHeadLightOn;
+	HeadLight->SetVisibility(bHeadLightOn, true);
+
+	UE_LOG(LogTemplateCharacter, Log, TEXT("[HeadLight] %s"), bHeadLightOn ? TEXT("开") : TEXT("关"));
+}
+
 void AstudyCharacter::OnPickupPressed()
 {
-	// 对话开着的时候，E 只是关掉对话
+	// ① 对话开着的时候，E 只是关掉对话
 	if (IsDialogOpen())
 	{
 		CloseDialog();
 		return;
 	}
 
-	// 附近有商人：优先和他交互（营地里按 E 不该去捡石头）
+	// ② 附近有商人：优先和他交互（营地里按 E 不该去捡石头）
 	if (AMerchant* Nearby = FindNearbyMerchant())
 	{
 		Nearby->Interact(this);
 		return;
 	}
 
+	// ③ 捡东西（准星对准的，或者附近最近的）
 	TryPickup();
 
 	// 按住 E 连续捡：每 PickupInterval 秒尝试捡一块

@@ -154,6 +154,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "HeadLight")
 	float HeadLightRadiusCm = 1500.f;
 
+	/** 头灯现在是开着的吗 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeadLight")
+	bool bHeadLightOn = true;
+
+	/** 开关头灯（按 E，且没有别的事情可做时） */
+	void ToggleHeadLight();
+
 	// ---------------- 视角 ----------------
 
 	/**
@@ -209,6 +216,9 @@ private:
 	/** 按住左键时的循环计时器 */
 	FTimerHandle DigRepeatHandle;
 
+	/** 准星是不是指着梯子（每帧在 UpdateFocus 里更新） */
+	bool bFocusingLadder = false;
+
 	/** 按住 E 时的循环计时器 */
 	FTimerHandle PickupRepeatHandle;
 
@@ -261,6 +271,23 @@ public:
 	/** 关闭对话 */
 	void CloseDialog();
 
+	// ---------------- 给 UMG 用的入口（都在 public） ----------------
+
+	/** 点第 Index 条选项 */
+	void ChooseDialogOption(int32 Index) { DialogChoose(Index); }
+
+	/** 数字输入框按"确认" */
+	void DialogSubmitNumber(float Value);
+
+	/** 数字输入框的上限（卖金时 = 手上的金重）。> 0 时对话框里会出现行内输入行 */
+	float GetDialogGoldHeld() const { return DialogMaxValue; }
+
+	/** 商人调用：开启 / 关闭对话框里的"行内数字输入"（0 = 关闭） */
+	void SetDialogNumberEnabled(float MaxValue) { DialogMaxValue = FMath::Max(MaxValue, 0.f); }
+
+	/** 附近可交互的商人（HUD 提示用） */
+	AMerchant* GetNearbyMerchant() const { return FindNearbyMerchant(); }
+
 protected:
 	// ---------------- 对话内部状态 ----------------
 
@@ -297,6 +324,10 @@ protected:
 
 	/** 选第 Index 条选项（0 起） */
 	void DialogChoose(int32 Index);
+
+public:
+	/** 准星是不是指着梯子（HUD 显示"按 E 爬梯"） */
+	bool IsFocusingLadder() const { return bFocusingLadder; }
 
 	/** 按 E 时调用：优先捡准星对准的那块，没有就捡附近最近的 */
 	void TryPickup();

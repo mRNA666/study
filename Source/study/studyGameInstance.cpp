@@ -2,6 +2,9 @@
 
 
 #include "studyGameInstance.h"
+#include "studyCharacter.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 
 void UstudyGameInstance::ResetRun()
 {
@@ -31,4 +34,37 @@ void UstudyGameInstance::SleepToNextDay()
 void UstudyGameInstance::ClampClock()
 {
 	ClockMinutes = FMath::Clamp(ClockMinutes, DayStartMinutes, DayEndMinutes);
+}
+
+void UstudyGameInstance::CollectCarriedGoldFromPlayers(UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+
+	UstudyGameInstance* GI = Cast<UstudyGameInstance>(World->GetGameInstance());
+	if (!GI)
+	{
+		return;
+	}
+
+	// 单机：只处理 0 号玩家
+	AstudyCharacter* Character = Cast<AstudyCharacter>(UGameplayStatics::GetPlayerCharacter(World, 0));
+	if (!Character)
+	{
+		return;
+	}
+
+	const float Carried = Character->GetCarriedGoldGrams();
+	if (Carried <= 0.f)
+	{
+		return;
+	}
+
+	GI->StashedGoldGrams += Carried;
+	Character->UnloadAll();		// 清空背包（不然数值会重复计）
+
+	UE_LOG(LogTemp, Log, TEXT("[Stash] 离开矿洞：背包里的 %.1f g 一并带走，累计 %.1f g"),
+		Carried, GI->StashedGoldGrams);
 }

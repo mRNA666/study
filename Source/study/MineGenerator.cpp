@@ -6,6 +6,7 @@
 #include "DropItem.h"
 #include "LadderActor.h"
 #include "UnloadZone.h"
+#include "Merchant.h"
 #include "Materials/MaterialInterface.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
@@ -479,6 +480,24 @@ void AMineGenerator::BuildStashArea()
 			}
 
 			Stash->FinishSpawning(StashXf);
+		}
+	}
+
+	// ---- 矿洞向导：站在平台上、后背贴着左侧（-Y）墙，离梯子 1.5 米不挡路 ----
+	{
+		// 平台 Y 范围是 Local.Y ± PlatWidth/2；人形模型进深约 30cm，所以放在 Y-80 处，
+		// 后背正好贴上 -Y 那面墙。
+		const FTransform GuideXf(FRotator(0.f, 180.f, 0.f),
+			GetActorLocation() + FVector(Local.X + 150.f, Local.Y - 80.f, PlatformTopZ));
+
+		AMerchant* Guide = World->SpawnActorDeferred<AMerchant>(
+			AMerchant::StaticClass(), GuideXf, nullptr, nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (Guide)
+		{
+			Guide->Kind = EMerchantKind::MineGuide;
+			Guide->DisplayName = TEXT("矿洞向导");
+			Guide->FinishSpawning(GuideXf);
 		}
 	}
 

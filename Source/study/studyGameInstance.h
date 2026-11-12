@@ -108,4 +108,10 @@ public:
 
 	/** 现在是第几天（1 起） */
 	int32 GetDayIndex() const { return DayIndex; }
+
+	/**
+	 * 切关卡之前调用：把玩家【背包里还没交的】黄金收进 StashedGoldGrams。
+	 * 不这么做的话，没去暂存点就跑的人会一点都带不回来。
+	 */
+	static void CollectCarriedGoldFromPlayers(UWorld* World);
 };

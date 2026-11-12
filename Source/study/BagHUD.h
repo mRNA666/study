@@ -49,6 +49,14 @@ private:
 	/** 商人的对话框（选项列表 / 数字输入） */
 	void DrawDialog();
 
+	// ---------------- UMG ----------------
+
+	/** UMG 版的 HUD。创建成功时，Canvas 那套就整个不画了 */
+	UPROPERTY(Transient)
+	TObjectPtr<class UStudyHUDWidget> HUDWidget;
+
+	virtual void BeginPlay() override;
+
 	/** 卸货区缓存。每 2 秒重扫一次，避免每帧 GetAllActorsOfClass */
 	TArray<TWeakObjectPtr<class AActor>> CachedZones;
 
