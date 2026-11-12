@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "BagHUD.h"
@@ -73,6 +73,14 @@ void ABagHUD::DrawHUD()
 			const float PhaseFontScale = FontScale * 1.5f;
 			float PhaseW = 0.f, PhaseH = 0.f;
 			GetTextSize(PhaseText, PhaseW, PhaseH, nullptr, PhaseFontScale);
+
+			// 背板：顶部文字压在天空/岩壁上时也能读清
+			const float BoxPadX = 26.f;
+			const float BoxPadY = 9.f;
+			DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.38f),
+				Canvas->SizeX * 0.5f - PhaseW * 0.5f - BoxPadX, 40.f - BoxPadY,
+				PhaseW + BoxPadX * 2.f, PhaseH + BoxPadY * 2.f);
+
 			DrawText(PhaseText, PhaseColor,
 				Canvas->SizeX * 0.5f - PhaseW * 0.5f, 40.f,
 				nullptr, PhaseFontScale, /*bScalePosition*/ false);
@@ -115,56 +123,193 @@ void ABagHUD::DrawHUD()
 			/*Font*/ nullptr, FontScale * 0.8f, /*bScalePosition*/ false);
 	}
 
-	// ---------------- 左下角：背包 ----------------
+	// ---------------- 左下角面板：背包 + 已交回 ----------------
 	const float Weight = Character->GetCarriedWeightKg();
 	const float MaxWeight = FMath::Max(Character->GetMaxCarryKg(), 1.f);
 	const float Ratio = Character->GetLoadRatio();
 
-	FLinearColor Color = FLinearColor::White;
+	FLinearColor LoadColor(0.92f, 0.95f, 1.f, 1.f);
 	if (Ratio >= 0.999f)
 	{
-		Color = FLinearColor(1.f, 0.25f, 0.2f, 1.f);
+		LoadColor = FLinearColor(1.f, 0.28f, 0.22f, 1.f);		// 满了：红
 	}
 	else if (Ratio >= 0.8f)
 	{
-		Color = FLinearColor(1.f, 0.8f, 0.2f, 1.f);
+		LoadColor = FLinearColor(1.f, 0.80f, 0.25f, 1.f);		// 快满：黄
 	}
 
-	const float Y = Canvas->SizeY - ScreenYFromBottom;
-
-	const FString WeightText = FString::Printf(TEXT("背包   %.1f / %.1f kg   (%.0f%%)"),
-		Weight, MaxWeight, Ratio * 100.f);
-	DrawText(WeightText, Color, ScreenX, Y, /*Font*/ nullptr, FontScale, /*bScalePosition*/ false);
-
-	FString SpeedText;
-	if (const APawn* Pawn = GetOwningPawn())
-	{
-		if (const UCharacterMovementComponent* MoveComp = Pawn->FindComponentByClass<UCharacterMovementComponent>())
-		{
-			SpeedText = FString::Printf(TEXT("移速   %.0f"), MoveComp->MaxWalkSpeed);
-		}
-	}
-	if (!SpeedText.IsEmpty())
-	{
-		DrawText(SpeedText, FLinearColor(0.75f, 0.85f, 1.f, 1.f),
-			ScreenX, Y + LineHeight, nullptr, FontScale * 0.75f, false);
-	}
-
-	// ---------------- 左下角第三行：已交回的黄金 ----------------
+	float Delivered = 0.f;
 	if (const UWorld* World = GetWorld())
 	{
 		if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
 		{
-			const FString GoldText = FString::Printf(TEXT("已交回   %.1f g   （背上 %.1f g）"),
-				GS->GetGoldGrams(0), Character->GetCarriedGoldGrams());
-
-			DrawText(GoldText, FLinearColor(1.f, 0.85f, 0.35f, 1.f),
-				ScreenX, Y + LineHeight * 2.f, nullptr, FontScale * 0.75f, false);
+			// 只显示已交回的总额；背包里背了多少不显示（留给玩家自己估）
+			Delivered = GS->GetGoldGrams(0);
 		}
 	}
 
+	const float LabelScale = FontScale * 0.52f;
+	const float ValueScale = FontScale * 0.90f;
+	const float Pad = 18.f;
+	const float BarH = 12.f;
+	const FLinearColor LabelColor(0.68f, 0.72f, 0.78f, 1.f);
+
+	auto Measure = [this](const FString& S, float Scale) -> FVector2D
+	{
+		float MW = 0.f, MH = 0.f;
+		GetTextSize(S, MW, MH, nullptr, Scale);
+		return FVector2D(MW, MH);
+	};
+
+	const FString BagLabel = TEXT("背包");
+	const FString WeightVal = FString::Printf(TEXT("%.1f / %.1f kg"), Weight, MaxWeight);
+	const FString PctVal = FString::Printf(TEXT("%.0f%%"), Ratio * 100.f);
+	const FString GoldLabel = TEXT("已交回");
+	const FString GoldVal = FString::Printf(TEXT("%.1f g"), Delivered);
+
+	const FVector2D SzBag = Measure(BagLabel, LabelScale);
+	const FVector2D SzW = Measure(WeightVal, ValueScale);
+	const FVector2D SzP = Measure(PctVal, ValueScale);
+	const FVector2D SzGL = Measure(GoldLabel, LabelScale);
+	const FVector2D SzGV = Measure(GoldVal, ValueScale);
+
+	const float RowWidth = FMath::Max(SzW.X + 14.f + SzP.X, FMath::Max(SzGV.X, SzBag.X));
+	const float PanelW = RowWidth + Pad * 2.f;
+
+	const float ContentH =
+		SzBag.Y + 3.f +
+		FMath::Max(SzW.Y, SzP.Y) + 5.f +
+		BarH + 14.f +
+		SzGL.Y + 3.f +
+		SzGV.Y;
+	const float PanelH = ContentH + Pad * 2.f;
+
+	const float PanelX = ScreenX;
+	// 参数就是字面意思：面板底边离屏幕底部多少像素（原来是 +90 的历史补偿，已去掉）
+	const float PanelY = FMath::Max(Canvas->SizeY - ScreenYFromBottom - PanelH, 0.f);
+
+	// 背板 + 左侧色条：让文字在任何背景上都看得清
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.42f), PanelX, PanelY, PanelW, PanelH);
+	DrawRect(FLinearColor(LoadColor.R, LoadColor.G, LoadColor.B, 0.6f), PanelX, PanelY, 3.f, PanelH);
+
+	float CurX = PanelX + Pad;
+	float CurY = PanelY + Pad;
+
+	// ① 背包（小标签）
+	DrawText(BagLabel, LabelColor, CurX, CurY, nullptr, LabelScale, false);
+	CurY += SzBag.Y + 3.f;
+
+	// ② 重量 + 百分比（大字，左对齐 / 右对齐）
+	DrawText(WeightVal, LoadColor, CurX, CurY, nullptr, ValueScale, false);
+	DrawText(PctVal, LoadColor, PanelX + PanelW - Pad - SzP.X, CurY, nullptr, ValueScale, false);
+	CurY += FMath::Max(SzW.Y, SzP.Y) + 5.f;
+
+	// ③ 载重条
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.55f), CurX, CurY, RowWidth, BarH);
+	if (Ratio > 0.f)
+	{
+		DrawRect(LoadColor, CurX, CurY, RowWidth * FMath::Clamp(Ratio, 0.f, 1.f), BarH);
+	}
+	CurY += BarH + 14.f;
+
+	// ④ 已交回（小标签 + 金色大字）
+	DrawText(GoldLabel, LabelColor, CurX, CurY, nullptr, LabelScale, false);
+	CurY += SzGL.Y + 3.f;
+	DrawText(GoldVal, FLinearColor(1.f, 0.84f, 0.30f, 1.f), CurX, CurY, nullptr, ValueScale, false);
+
+	// ---------------- 结算面板 ----------------
+	DrawSettlement();
+
 	// ---------------- 卸货区标记（红框 + 中文标签） ----------------
 	DrawUnloadZones();
+}
+
+void ABagHUD::DrawSettlement()
+{
+	UWorld* World = GetWorld();
+	if (!World || !Canvas)
+	{
+		return;
+	}
+
+	const AstudyGameState* GS = World->GetGameState<AstudyGameState>();
+	if (!GS || GS->GetPhase() != EGamePhase::Finished)
+	{
+		return;
+	}
+
+	const float TitleScale = FontScale * 1.2f;
+	const float GoldScale = FontScale * 1.8f;
+	const float InfoScale = FontScale * 0.8f;
+	const float HintScale = FontScale * 0.75f;
+
+	const FString TitleText = TEXT("本局结束");
+	const FString GoldLabel = TEXT("黄金");
+	const FString GoldText = FString::Printf(TEXT("%.1f g"), GS->GetGoldGrams(0));
+	const FString InfoText = FString::Printf(TEXT("卸货 %d 趟"), GS->GetUnloadCount());
+	const FString HintText = TEXT("按  R  再来一局");
+
+	auto Measure = [this](const FString& S, float Scale) -> FVector2D
+	{
+		float MW = 0.f, MH = 0.f;
+		GetTextSize(S, MW, MH, nullptr, Scale);
+		return FVector2D(MW, MH);
+	};
+
+	const FVector2D SzTitle = Measure(TitleText, TitleScale);
+	const FVector2D SzGoldLabel = Measure(GoldLabel, GoldScale * 0.55f);
+	const FVector2D SzGold = Measure(GoldText, GoldScale);
+	const FVector2D SzInfo = Measure(InfoText, InfoScale);
+	const FVector2D SzHint = Measure(HintText, HintScale);
+
+	const float PadX = 60.f;
+	const float PadY = 28.f;
+	const float GoldRowW = SzGoldLabel.X + 18.f + SzGold.X;
+
+	const float ContentW = FMath::Max3(
+		static_cast<float>(SzTitle.X),
+		GoldRowW,
+		static_cast<float>(FMath::Max(SzInfo.X, SzHint.X)));
+	const float ContentH =
+		SzTitle.Y + 18.f +
+		FMath::Max(SzGold.Y, SzGoldLabel.Y) + 12.f +
+		SzInfo.Y + 26.f +
+		SzHint.Y;
+
+	const float PanelW = ContentW + PadX * 2.f;
+	const float PanelH = ContentH + PadY * 2.f;
+	const float PanelX = (Canvas->SizeX - PanelW) * 0.5f;
+	const float PanelY = (Canvas->SizeY - PanelH) * 0.5f;
+
+	// 背板 + 上下两条金线
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.72f), PanelX, PanelY, PanelW, PanelH);
+	DrawRect(FLinearColor(1.f, 0.84f, 0.30f, 0.9f), PanelX, PanelY, PanelW, 3.f);
+	DrawRect(FLinearColor(1.f, 0.84f, 0.30f, 0.9f), PanelX, PanelY + PanelH - 3.f, PanelW, 3.f);
+
+	float CurY = PanelY + PadY;
+
+	// 标题
+	DrawText(TitleText, FLinearColor(0.92f, 0.95f, 1.f, 1.f),
+		PanelX + (PanelW - SzTitle.X) * 0.5f, CurY, nullptr, TitleScale, false);
+	CurY += SzTitle.Y + 18.f;
+
+	// 黄金：标签 + 金色大数字
+	const float GoldRowX = PanelX + (PanelW - GoldRowW) * 0.5f;
+	DrawText(GoldLabel, FLinearColor(0.68f, 0.72f, 0.78f, 1.f),
+		GoldRowX, CurY + (SzGold.Y - SzGoldLabel.Y) * 0.5f, nullptr, GoldScale * 0.55f, false);
+	DrawText(GoldText, FLinearColor(1.f, 0.84f, 0.30f, 1.f),
+		GoldRowX + SzGoldLabel.X + 18.f, CurY, nullptr, GoldScale, false);
+	CurY += SzGold.Y + 12.f;
+
+	// 卸货趟数
+	DrawText(InfoText, FLinearColor(0.80f, 0.84f, 0.90f, 1.f),
+		PanelX + (PanelW - SzInfo.X) * 0.5f, CurY, nullptr, InfoScale, false);
+	CurY += SzInfo.Y + 26.f;
+
+	// 提示：缓慢呼吸闪烁
+	const float Blink = 0.55f + 0.45f * FMath::Sin(World->GetTimeSeconds() * 3.0);
+	DrawText(HintText, FLinearColor(1.f, 1.f, 1.f, Blink),
+		PanelX + (PanelW - SzHint.X) * 0.5f, CurY, nullptr, HintScale, false);
 }
 
 void ABagHUD::DrawUnloadZones()

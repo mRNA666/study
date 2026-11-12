@@ -61,9 +61,10 @@ void AstudyGameState::AddGoldGrams(int32 PlayerIndex, float Grams)
 	}
 
 	PlayerGoldGrams[PlayerIndex] += Grams;
+	UnloadCount++;
 
-	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卸货 +%.1f g，本局累计 %.1f g"),
-		PlayerIndex, Grams, PlayerGoldGrams[PlayerIndex]);
+	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卸货 +%.1f g，本局累计 %.1f g（第 %d 趟）"),
+		PlayerIndex, Grams, PlayerGoldGrams[PlayerIndex], UnloadCount);
 }
 
 float AstudyGameState::GetGoldGrams(int32 PlayerIndex) const
@@ -83,4 +84,5 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AstudyGameState, Phase);
 	DOREPLIFETIME(AstudyGameState, TimeRemaining);
 	DOREPLIFETIME(AstudyGameState, PlayerGoldGrams);
+	DOREPLIFETIME(AstudyGameState, UnloadCount);
 }

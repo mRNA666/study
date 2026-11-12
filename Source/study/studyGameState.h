@@ -48,9 +48,16 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	TArray<float> PlayerGoldGrams;
 
+	/** 一共卸了几趟货 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	int32 UnloadCount = 0;
+
 	/** 读某个玩家已交回的黄金（索引越界返回 0） */
 	UFUNCTION(BlueprintPure, Category = "Match")
 	float GetGoldGrams(int32 PlayerIndex) const;
+
+	/** 一共卸了几趟货（结算面板显示用） */
+	int32 GetUnloadCount() const { return UnloadCount; }
 
 	/** 只在服务器调用：卸货时加分 */
 	void AddGoldGrams(int32 PlayerIndex, float Grams);

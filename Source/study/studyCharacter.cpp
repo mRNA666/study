@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -55,6 +56,43 @@ AstudyCharacter::AstudyCharacter()
 
 	// 明确打开 Tick：准星焦点每帧要更新一次
 	PrimaryActorTick.bCanEverTick = true;
+
+	// 头灯：挂在第一人称相机上，跟着视角走。矿洞里没有它什么都看不见。
+	HeadLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("HeadLight"));
+	HeadLight->SetupAttachment(FirstPersonCameraComponent);
+	HeadLight->SetRelativeLocation(FVector(8.f, 0.f, -8.f));
+	HeadLight->SetIntensity(HeadLightIntensity);
+	HeadLight->SetAttenuationRadius(HeadLightRadiusCm);
+	HeadLight->SetInnerConeAngle(16.f);
+	HeadLight->SetOuterConeAngle(38.f);
+	HeadLight->SetLightColor(FLinearColor(1.f, 0.94f, 0.82f));
+	HeadLight->SetCastShadows(true);
+}
+
+void AstudyCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 相机位置：由 CameraOffset 决定（可在角色蓝图的类默认值里调）
+	if (UCameraComponent* Cam = GetFirstPersonCameraComponent())
+	{
+		Cam->SetRelativeLocation(CameraOffset);
+	}
+
+	// 头灯参数走 UPROPERTY，方便在角色蓝图里调
+	if (HeadLight)
+	{
+		HeadLight->SetRelativeLocation(HeadLightOffset);
+		HeadLight->SetIntensity(HeadLightIntensity);
+		HeadLight->SetAttenuationRadius(HeadLightRadiusCm);
+	}
+
+	// 记住相机原始相对位置：震屏是从这里偏移的，结束时要还原回来。
+	// 必须放在设完 CameraOffset 之后。
+	if (UCameraComponent* Cam = GetFirstPersonCameraComponent())
+	{
+		CameraBaseRelativeLocation = Cam->GetRelativeLocation();
+	}
 }
 
 void AstudyCharacter::Tick(float DeltaSeconds)
@@ -63,6 +101,9 @@ void AstudyCharacter::Tick(float DeltaSeconds)
 
 	// 每帧更新一次"准星对准了哪块石头"。只做一次直线检测，很便宜。
 	UpdateFocus();
+
+	// 震屏偏移（没有在震的话直接返回）
+	UpdateCameraShake(DeltaSeconds);
 }
 
 void AstudyCharacter::UpdateFocus()
@@ -130,8 +171,7 @@ void AstudyCharacter::TryPickup()
 		GetCharacterMovement()->MaxWalkSpeed / BaseMaxWalkSpeed);
 }
 
-float AstudyCharacter::UnloadAll()
-{
+float AstudyCharacter::UnloadAll(){
 	const float Delivered = CarriedGoldGrams;
 	if (CarriedWeightKg <= 0.f && Delivered <= 0.f)
 	{
@@ -146,6 +186,24 @@ float AstudyCharacter::UnloadAll()
 	UpdateSpeedPenalty();
 
 	return Delivered;
+}
+
+void AstudyCharacter::RequestRestart()
+{
+	// 只在结算之后才允许重开
+	const UWorld* World = GetWorld();
+	const AstudyGameState* GS = World ? World->GetGameState<AstudyGameState>() : nullptr;
+	if (!GS || GS->GetPhase() != EGamePhase::Finished)
+	{
+		return;
+	}
+
+	// 重新加载当前关卡。
+	// GetCurrentLevelName 的第二个参数会把 PIE 前缀（UEDPIE_0_）去掉，
+	// 不去的话在编辑器里会找不到关卡名。
+	const FString LevelName = UGameplayStatics::GetCurrentLevelName(this, /*bRemovePrefixString*/ true);
+	UE_LOG(LogTemplateCharacter, Warning, TEXT("[Match] 按 R 重开：%s"), *LevelName);
+	UGameplayStatics::OpenLevel(this, FName(*LevelName));
 }
 
 void AstudyCharacter::UpdateSpeedPenalty()
@@ -189,8 +247,79 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	// 站在梯子旁边又踩着石头时会一起触发。以后要合并再说。
 	if (PlayerInputComponent)
 	{
-		PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &AstudyCharacter::TryPickup);
+		// E：按下立刻捡一块，按住每 PickupInterval 秒再捡一块
+		PlayerInputComponent->BindKey(EKeys::E, IE_Pressed, this, &AstudyCharacter::OnPickupPressed);
+		PlayerInputComponent->BindKey(EKeys::E, IE_Released, this, &AstudyCharacter::OnPickupReleased);
+
+		// R：结算之后重开一局（其他阶段按了没反应）
+		PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &AstudyCharacter::RequestRestart);
 	}
+}
+
+void AstudyCharacter::OnPickupPressed()
+{
+	TryPickup();
+
+	// 按住 E 连续捡：每 PickupInterval 秒尝试捡一块
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			PickupRepeatHandle, this, &AstudyCharacter::TryPickup,
+			FMath::Max(PickupInterval, 0.02f), /*bLoop*/ true);
+	}
+}
+
+void AstudyCharacter::OnPickupReleased()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PickupRepeatHandle);
+	}
+}
+
+void AstudyCharacter::TriggerDigShake()
+{
+	// 没在震的时候才重新取基准位置（正在震时取会把偏移当成基准，越震越偏）
+	if (ShakeTimeLeft <= 0.f)
+	{
+		if (UCameraComponent* Cam = GetFirstPersonCameraComponent())
+		{
+			CameraBaseRelativeLocation = Cam->GetRelativeLocation();
+		}
+	}
+
+	ShakeTimeLeft = DigShakeDuration;
+	ShakeTotalTime = FMath::Max(DigShakeDuration, 0.001f);
+	ShakeAmplitude = DigShakeOffsetCm;
+}
+
+void AstudyCharacter::UpdateCameraShake(float DeltaSeconds)
+{
+	UCameraComponent* Cam = GetFirstPersonCameraComponent();
+	if (!Cam || ShakeTimeLeft <= 0.f)
+	{
+		return;
+	}
+
+	ShakeTimeLeft -= DeltaSeconds;
+
+	if (ShakeTimeLeft <= 0.f)
+	{
+		// 结束：还原到原位
+		Cam->SetRelativeLocation(CameraBaseRelativeLocation);
+		return;
+	}
+
+	// 越接近结束，幅度越小（线性衰减）
+	const float Alpha = ShakeTimeLeft / ShakeTotalTime;
+	const float Amp = ShakeAmplitude * Alpha;
+
+	const FVector Offset(
+		FMath::FRandRange(-Amp, Amp),
+		FMath::FRandRange(-Amp, Amp),
+		FMath::FRandRange(-Amp, Amp));
+
+	Cam->SetRelativeLocation(CameraBaseRelativeLocation + Offset);
 }
 
 
@@ -340,6 +469,9 @@ void AstudyCharacter::PerformDig()
 		if (ADigVolume* DigVolume = Cast<ADigVolume>(Hit.GetActor()))
 		{
 			DigVolume->DigAt(Hit.ImpactPoint, 20.f);
+
+			// 挖中了才震一下（打空气不震）
+			TriggerDigShake();
 		}
 	}
 }

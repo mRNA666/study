@@ -19,17 +19,13 @@ class STUDY_API ABagHUD : public AHUD
 public:
 	virtual void DrawHUD() override;
 
-	/** 行高（像素）。字越大这个也要跟着调大 */
-	UPROPERTY(EditAnywhere, Category = "HUD")
-	float LineHeight = 56.f;
-
 	/** 左边距 */
 	UPROPERTY(EditAnywhere, Category = "HUD")
 	float ScreenX = 60.f;
 
-	/** 上边距（从屏幕底部往上算） */
+	/** 面板底边离屏幕底部的距离（像素）。0 = 贴底 */
 	UPROPERTY(EditAnywhere, Category = "HUD")
-	float ScreenYFromBottom = 140.f;
+	float ScreenYFromBottom = 50.f;
 
 	/** 字体缩放 */
 	UPROPERTY(EditAnywhere, Category = "HUD")
@@ -46,6 +42,9 @@ public:
 private:
 	/** 画所有卸货区的红框和"卸货区"标签（屏幕空间投影，不需要任何资产） */
 	void DrawUnloadZones();
+
+	/** 结算面板：对局结束之后盖在屏幕中央 */
+	void DrawSettlement();
 
 	/** 卸货区缓存。每 2 秒重扫一次，避免每帧 GetAllActorsOfClass */
 	TArray<TWeakObjectPtr<class AActor>> CachedZones;

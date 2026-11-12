@@ -1,15 +1,26 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "studyGameMode.h"
 #include "BagHUD.h"
 #include "studyGameState.h"
+#include "UObject/ConstructorHelpers.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 
 AstudyGameMode::AstudyGameMode()
 {
-	// 用最简 HUD 显示背包重量（不用建 UMG 资产）
-	HUDClass = ABagHUD::StaticClass();
+	// HUD：如果找得到蓝图子类 BP_BagHUD 就用它 —— 这样字号 / 边距 / 颜色
+	// 都能在编辑器里调，不用改代码重编译；找不到就退回 C++ 类本身。
+	// 蓝图要放在 Content/UI/BP_BagHUD（父类选 BagHUD）。
+	static ConstructorHelpers::FClassFinder<ABagHUD> HUDBP(TEXT("/Game/UI/BP_BagHUD"));
+	if (HUDBP.Succeeded())
+	{
+		HUDClass = HUDBP.Class;
+	}
+	else
+	{
+		HUDClass = ABagHUD::StaticClass();
+	}
 
 	// 让引擎为本局创建我们的 GameState，而不是默认的 AGameStateBase。
 	// 注意：这个值在蓝图里可以被覆盖，所以 BeginPlay 里还要检查一遍

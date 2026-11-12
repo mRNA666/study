@@ -10,6 +10,7 @@
 class UInputComponent;
 class USkeletalMeshComponent;
 class UCameraComponent;
+class USpotLightComponent;
 class UInputAction;
 struct FInputActionValue;
 
@@ -122,6 +123,44 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float DigCooldownSeconds = 0.5f;
 
+	// ---------------- 头灯（矿洞全靠它） ----------------
+
+	/** 戴在相机上的矿灯 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeadLight")
+	TObjectPtr<USpotLightComponent> HeadLight;
+
+	/** 头灯相对相机的偏移（cm）。X 前 / Y 右 / Z 上 */
+	UPROPERTY(EditAnywhere, Category = "HeadLight")
+	FVector HeadLightOffset = FVector(8.f, 0.f, -8.f);
+
+	/** 头灯亮度（流明） */
+	UPROPERTY(EditAnywhere, Category = "HeadLight")
+	float HeadLightIntensity = 20000.f;
+
+	/** 头灯照多远（cm） */
+	UPROPERTY(EditAnywhere, Category = "HeadLight")
+	float HeadLightRadiusCm = 1500.f;
+
+	// ---------------- 视角 ----------------
+
+	/**
+	 * 相机相对第一人称手部（head 骨骼）的偏移（cm）。
+	 * 想让镜头往前/后、左/右、高/低就调这里。
+	 * 默认 (-2.8, 5.89, 0) 是模板自带的。
+	 */
+	UPROPERTY(EditAnywhere, Category = "View")
+	FVector CameraOffset = FVector(-2.8f, 5.89f, 0.f);
+
+	// ---------------- 手感 ----------------
+
+	/** 挖一下的震屏幅度（cm） */
+	UPROPERTY(EditAnywhere, Category = "Feel")
+	float DigShakeOffsetCm = 1.2f;
+
+	/** 震屏时长（秒） */
+	UPROPERTY(EditAnywhere, Category = "Feel")
+	float DigShakeDuration = 0.12f;
+
 	// ---------------- 背包 ----------------
 
 	/** 当前背着的重量（kg） */
@@ -144,6 +183,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Bag")
 	float FocusReachCm = 200.f;
 
+	/** 按住 E 时每隔多久捡一块（秒） */
+	UPROPERTY(EditAnywhere, Category = "Bag")
+	float PickupInterval = 0.12f;
+
 private:
 
 	/** 准星当前对准的掉落物 */
@@ -152,6 +195,17 @@ private:
 
 	/** 按住左键时的循环计时器 */
 	FTimerHandle DigRepeatHandle;
+
+	/** 按住 E 时的循环计时器 */
+	FTimerHandle PickupRepeatHandle;
+
+	/** 震屏：剩余时间 / 总时长 / 幅度 */
+	float ShakeTimeLeft = 0.f;
+	float ShakeTotalTime = 0.f;
+	float ShakeAmplitude = 0.f;
+
+	/** 相机原始的相对位置。震屏偏移从这个位置算，结束时还原到这里 */
+	FVector CameraBaseRelativeLocation = FVector::ZeroVector;
 
 	/** 上一次成功挖掘的时间（秒） */
 	double LastDigTime = -1000.0;
@@ -165,10 +219,28 @@ private:
 	/** 按 E 时调用：优先捡准星对准的那块，没有就捡附近最近的 */
 	void TryPickup();
 
+	/** 按 R 时调用：结算之后重开一局（其他阶段无反应） */
+	void RequestRestart();
+
+	/** 按下 E：立刻捡一次，并启动"按住连续捡"的计时器 */
+	void OnPickupPressed();
+
+	/** 松开 E：停掉连续捡 */
+	void OnPickupReleased();
+
+	/** 挖中石头时触发一次震屏 */
+	void TriggerDigShake();
+
+	/** 每帧更新震屏偏移；结束后把相机放回原位 */
+	void UpdateCameraShake(float DeltaSeconds);
+
 	/** 按当前负重更新移速 */
 	void UpdateSpeedPenalty();
 
 protected:
+
+	/** 初始化：套头灯参数、记住相机的原始相对位置 */
+	virtual void BeginPlay() override;
 
 	/** 每帧更新准星焦点 */
 	virtual void Tick(float DeltaSeconds) override;
