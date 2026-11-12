@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "DigVolume.h"
@@ -304,7 +304,26 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 	const double Inside = FMath::Min(FMath::Max(Q.X, FMath::Max(Q.Y, Q.Z)), 0.0);
 	const double BoxDist = Outside.Length() + Inside;
 
-	const double StoneDist = BoxDist + EvalFBM(P, NoiseScale) * NoiseAmplitudeCm;
+	// 噪声用【世界坐标】：相邻块在同一个世界点上会算出同一个值，
+	// 暴露面的起伏才能跨块连续（用局部坐标的话每块从自己原点起算，地面会出现锯齿）。
+	const FVector3d WorldP = GetActorTransform().TransformPosition(P);
+
+	// 方向遮罩：只有朝向 NoiseDirection 的那一面才有起伏。
+	// 其余五面保持纯粹的 BoxDist —— 在盒面上恰好等于 0，相邻块才能严丝合缝贴住。
+	double NoiseValue = EvalFBM(WorldP, NoiseScale);
+	if (bDirectionalNoise)
+	{
+		const FVector3d Dir = NoiseDirection.GetSafeNormal();
+		const double T = (H > 0.0) ? (P.Dot(Dir) / H) : 0.0;
+
+		// 关键：只保留"往空腔里凸"的成分（取负的绝对值）。
+		// 表面永远是 盒面 + 0~N cm，不会凹到盒面以下 ——
+		// 否则地板的起伏凹下去时，会和上方墙块平底之间露出一条缝。
+		NoiseValue = -FMath::Abs(NoiseValue)
+			* FMath::SmoothStep(0.35, 1.0, T);
+	}
+
+	const double StoneDist = BoxDist + NoiseValue * NoiseAmplitudeCm;
 	double Result = StoneDist;
 
 	for (const FDigHole& Hole : DigHoles)
@@ -331,21 +350,20 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 	return Result;
 }
 
-void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
+float ADigVolume::CarveAt(const FVector& WorldLocation, float RadiusCm)
 {
 	// 已经挖空：不再接受挖掘（洞列表也不再增长）
 	if (bDepleted)
 	{
-		return;
+		return 0.f;
 	}
 
 	// EvalSDF 里的 P 是"相对本 Actor 原点"的局部坐标，而射线给的是世界坐标。
 	// Actor 一旦移动或旋转，两种坐标就不一样了，所以必须先转换。
 	const FVector LocalPos = GetActorTransform().InverseTransformPosition(WorldLocation);
 
-	// ① 先估算"这一下挖掉了多少体积"——必须在加洞之前算，否则量到的是挖完之后的状态
+	// 先估算"这一下挖掉了多少体积"——必须在加洞之前算，否则量到的是挖完之后的状态
 	const double RemovedVolume = EstimateRemovedVolume(LocalPos, RadiusCm);
-	const double SphereVolume = SphereVolumeCm3((double)RadiusCm);
 
 	FDigHole NewHole;
 	NewHole.Center = LocalPos;
@@ -353,6 +371,26 @@ void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 	DigHoles.Add(NewHole);
 
 	RebuildMesh();
+
+	return static_cast<float>(RemovedVolume);
+}
+
+void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm, bool bSpawnDrop)
+{
+	const float Removed = CarveAt(WorldLocation, RadiusCm);
+	if (bSpawnDrop && Removed > 0.f)
+	{
+		SpawnDropForRemovedVolume(
+			Removed,
+			static_cast<float>(SphereVolumeCm3(static_cast<double>(RadiusCm))),
+			WorldLocation);
+	}
+}
+
+void ADigVolume::SpawnDropForRemovedVolume(float RemovedVolumeIn, float SphereVolumeIn, const FVector& WorldLocation)
+{
+	const double RemovedVolume = RemovedVolumeIn;
+	const double SphereVolume = SphereVolumeIn;
 
 	// ② 体积比例 → 三档 → 每档固定的重量
 	const EDropSize Size = ClassifyDropSize(RemovedVolume, SphereVolume);
@@ -386,13 +424,13 @@ void ADigVolume::DigAt(const FVector& WorldLocation, float RadiusCm)
 	}
 
 	UE_LOG(LogDig, Warning,
-		TEXT("[Drop] 半径=%.1f 实心比=%.0f%% 挖掉=%.0f/%.0f cm³ → %s | 重量=%.1f kg | %s 含金=%.0f%% | 位置=%.1f,%.1f,%.1f"),
-		RadiusCm, Ratio * 100.0, RemovedVolume, SphereVolume, SizeName, WeightKg,
+		TEXT("[Drop] 实心比=%.0f%% 挖掉=%.0f/%.0f cm³ → %s | 重量=%.1f kg | %s 含金=%.0f%% | 位置=%.1f,%.1f,%.1f"),
+		Ratio * 100.0, RemovedVolume, SphereVolume, SizeName, WeightKg,
 		Size == EDropSize::None ? TEXT("-") : (bIsOre ? TEXT("矿石") : TEXT("废石")),
 		Grade * 100.0f,
 		WorldLocation.X, WorldLocation.Y, WorldLocation.Z);
 
-	// ④ 生成实物
+	// ④ 生成实物（由调用方决定要不要掉 —— 一次挥击只掉一块）
 	if (Size != EDropSize::None && DropItemClass)
 	{
 		if (UWorld* World = GetWorld())

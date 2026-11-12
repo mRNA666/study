@@ -39,6 +39,12 @@ void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSize
 	GoldGrams = InGoldGrams;
 	bIsRubble = (GoldContent < 0.05f);
 
+	// 废石过一会儿自己消失，免得地上堆满垃圾；含金矿永久保留（要背回去换钱的）
+	if (bIsRubble && RubbleLifeSpan > 0.f)
+	{
+		SetLifeSpan(RubbleLifeSpan);
+	}
+
 	// 运行时再强制设一次"不挡玩家"。
 	// 原因：BP_DropItem 是把类保存进蓝图的，蓝图里的碰撞预设会覆盖构造函数里设的值，
 	// 所以只在构造函数里设不保险，必须每次生成时再压一遍。

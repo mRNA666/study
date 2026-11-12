@@ -45,6 +45,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Drop")
 	bool bIsRubble = false;
 
+	/** 废石多少秒后自动消失（含金矿不受影响，永久留在地上） */
+	UPROPERTY(EditAnywhere, Category = "Drop")
+	float RubbleLifeSpan = 30.f;
+
 	/**
 	 * 这块石头用什么材质。留空则用模型自带的（SM_Rock_A~D 里配的 M_Nat_Stone）。
 	 * 正常流程是由 ADigVolume 按"这座矿洞是什么岩层"传进来。

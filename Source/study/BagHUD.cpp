@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "BagHUD.h"
@@ -36,54 +36,30 @@ void ABagHUD::DrawHUD()
 		return;
 	}
 
-	// ---------------- 顶部：对局阶段 + 倒计时 ----------------
-	// 放在取 Character 之前：就算暂时没有角色，也能看到对局状态
+	// ---------------- 左上角：第几天 + 时刻 ----------------
+	// 放在取 Character 之前：就算暂时没有角色，也能看到时间
 	if (const UWorld* World = GetWorld())
 	{
 		if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
 		{
-			FString PhaseText;
-			FLinearColor PhaseColor = FLinearColor::White;
+			const int32 TotalMin = FMath::FloorToInt(GS->GetClockMinutes());
+			const FString ClockText = FString::Printf(TEXT("第 %d 天    %02d:%02d"),
+				GS->GetDayIndex(), TotalMin / 60, TotalMin % 60);
 
-			switch (GS->GetPhase())
-			{
-			case EGamePhase::WaitingToStart:
-				PhaseText = TEXT("准备中……");
-				PhaseColor = FLinearColor(1.f, 0.82f, 0.2f, 1.f);
-				break;
+			const float ClockScale = FontScale * 1.1f;
+			float ClockW = 0.f, ClockH = 0.f;
+			GetTextSize(ClockText, ClockW, ClockH, nullptr, ClockScale);
 
-			case EGamePhase::InProgress:
-			{
-				// 上取整：剩 0.4 秒时仍显示 0:01，不会提前跳到 0:00
-				const int32 Total = FMath::CeilToInt(GS->GetTimeRemaining());
-				PhaseText = FString::Printf(TEXT("剩余   %d:%02d"), Total / 60, Total % 60);
-				if (Total <= 30)
-				{
-					PhaseColor = FLinearColor(1.f, 0.3f, 0.2f, 1.f);	// 最后 30 秒变红
-				}
-				break;
-			}
+			const float BoxPadX = 18.f;
+			const float BoxPadY = 8.f;
+			const float BoxX = ScreenX;
+			const float BoxY = 36.f;
 
-			case EGamePhase::Finished:
-				PhaseText = TEXT("时间到");
-				PhaseColor = FLinearColor(1.f, 0.55f, 0.1f, 1.f);
-				break;
-			}
+			DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.42f),
+				BoxX, BoxY, ClockW + BoxPadX * 2.f, ClockH + BoxPadY * 2.f);
 
-			const float PhaseFontScale = FontScale * 1.5f;
-			float PhaseW = 0.f, PhaseH = 0.f;
-			GetTextSize(PhaseText, PhaseW, PhaseH, nullptr, PhaseFontScale);
-
-			// 背板：顶部文字压在天空/岩壁上时也能读清
-			const float BoxPadX = 26.f;
-			const float BoxPadY = 9.f;
-			DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.38f),
-				Canvas->SizeX * 0.5f - PhaseW * 0.5f - BoxPadX, 40.f - BoxPadY,
-				PhaseW + BoxPadX * 2.f, PhaseH + BoxPadY * 2.f);
-
-			DrawText(PhaseText, PhaseColor,
-				Canvas->SizeX * 0.5f - PhaseW * 0.5f, 40.f,
-				nullptr, PhaseFontScale, /*bScalePosition*/ false);
+			DrawText(ClockText, FLinearColor(1.f, 0.95f, 0.82f, 1.f),
+				BoxX + BoxPadX, BoxY + BoxPadY, nullptr, ClockScale, /*bScalePosition*/ false);
 		}
 	}
 
@@ -138,13 +114,15 @@ void ABagHUD::DrawHUD()
 		LoadColor = FLinearColor(1.f, 0.80f, 0.25f, 1.f);		// 快满：黄
 	}
 
-	float Delivered = 0.f;
+	float GoldGrams = 0.f;
+	int32 Cash = 0;
 	if (const UWorld* World = GetWorld())
 	{
 		if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
 		{
-			// 只显示已交回的总额；背包里背了多少不显示（留给玩家自己估）
-			Delivered = GS->GetGoldGrams(0);
+			// 金重 = 还没卖掉的黄金；现金 = 已经卖出去的。背包里背了多少不显示
+			GoldGrams = GS->GetGoldGrams(0);
+			Cash = GS->GetCash(0);
 		}
 	}
 
@@ -164,24 +142,33 @@ void ABagHUD::DrawHUD()
 	const FString BagLabel = TEXT("背包");
 	const FString WeightVal = FString::Printf(TEXT("%.1f / %.1f kg"), Weight, MaxWeight);
 	const FString PctVal = FString::Printf(TEXT("%.0f%%"), Ratio * 100.f);
-	const FString GoldLabel = TEXT("已交回");
-	const FString GoldVal = FString::Printf(TEXT("%.1f g"), Delivered);
+	const FString GoldLabel = TEXT("金重");
+	const FString GoldVal = FString::Printf(TEXT("%.1f g"), GoldGrams);
+	const FString CashLabel = TEXT("现金");
+	const FString CashVal = FText::AsNumber(Cash).ToString();
 
 	const FVector2D SzBag = Measure(BagLabel, LabelScale);
 	const FVector2D SzW = Measure(WeightVal, ValueScale);
 	const FVector2D SzP = Measure(PctVal, ValueScale);
 	const FVector2D SzGL = Measure(GoldLabel, LabelScale);
 	const FVector2D SzGV = Measure(GoldVal, ValueScale);
+	const FVector2D SzCL = Measure(CashLabel, LabelScale);
+	const FVector2D SzCV = Measure(CashVal, ValueScale);
 
-	const float RowWidth = FMath::Max(SzW.X + 14.f + SzP.X, FMath::Max(SzGV.X, SzBag.X));
+	// 资源行：左小标签 + 右大数值，两行（金重 / 现金）
+	const float ResourceRowH = FMath::Max(SzGL.Y + SzGV.Y + 2.f, SzCL.Y + SzCV.Y + 2.f);
+
+	const float RowWidth = FMath::Max(
+		FMath::Max(SzW.X + 14.f + SzP.X, SzGV.X),
+		FMath::Max(SzCV.X, FMath::Max(SzBag.X, SzGL.X)));
 	const float PanelW = RowWidth + Pad * 2.f;
 
 	const float ContentH =
 		SzBag.Y + 3.f +
 		FMath::Max(SzW.Y, SzP.Y) + 5.f +
 		BarH + 14.f +
-		SzGL.Y + 3.f +
-		SzGV.Y;
+		ResourceRowH + 10.f +
+		ResourceRowH;
 	const float PanelH = ContentH + Pad * 2.f;
 
 	const float PanelX = ScreenX;
@@ -212,10 +199,16 @@ void ABagHUD::DrawHUD()
 	}
 	CurY += BarH + 14.f;
 
-	// ④ 已交回（小标签 + 金色大字）
+	const FLinearColor GoldColor(1.f, 0.84f, 0.30f, 1.f);
+
+	// ④ 金重（小标签 + 金色大字，数值右对齐）
 	DrawText(GoldLabel, LabelColor, CurX, CurY, nullptr, LabelScale, false);
-	CurY += SzGL.Y + 3.f;
-	DrawText(GoldVal, FLinearColor(1.f, 0.84f, 0.30f, 1.f), CurX, CurY, nullptr, ValueScale, false);
+	DrawText(GoldVal, GoldColor, PanelX + PanelW - Pad - SzGV.X, CurY + SzGL.Y + 2.f, nullptr, ValueScale, false);
+	CurY += ResourceRowH + 10.f;
+
+	// ⑤ 现金
+	DrawText(CashLabel, LabelColor, CurX, CurY, nullptr, LabelScale, false);
+	DrawText(CashVal, GoldColor, PanelX + PanelW - Pad - SzCV.X, CurY + SzCL.Y + 2.f, nullptr, ValueScale, false);
 
 	// ---------------- 结算面板 ----------------
 	DrawSettlement();
@@ -244,9 +237,10 @@ void ABagHUD::DrawSettlement()
 	const float HintScale = FontScale * 0.75f;
 
 	const FString TitleText = TEXT("本局结束");
-	const FString GoldLabel = TEXT("黄金");
-	const FString GoldText = FString::Printf(TEXT("%.1f g"), GS->GetGoldGrams(0));
-	const FString InfoText = FString::Printf(TEXT("卸货 %d 趟"), GS->GetUnloadCount());
+	const FString GoldLabel = TEXT("最终现金");
+	const FString GoldText = FText::AsNumber(GS->GetFinalCash()).ToString();
+	const FString InfoText = FString::Printf(TEXT("卸货 %d 趟   ·   未卖黄金已按 65%% 折算"),
+		GS->GetUnloadCount());
 	const FString HintText = TEXT("按  R  再来一局");
 
 	auto Measure = [this](const FString& S, float Scale) -> FVector2D

@@ -127,6 +127,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float DigReachCm = 230.f;
 
+	/**
+	 * 单次挖掘挖掉的球形半径（cm）。
+	 * 调大 → 挖得快、洞更圆；但每块石头的总挥击次数变少，
+	 * 掉落是按"挥一次"触发的，所以掉落总数会跟着变少。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	float DigRadiusCm = 35.f;
+
 	// ---------------- 头灯（矿洞全靠它） ----------------
 
 	/** 戴在相机上的矿灯 */

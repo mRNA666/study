@@ -53,10 +53,24 @@ public:
 	float SampleStepCm = 4.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float NoiseAmplitudeCm = 6.f;
+	float NoiseAmplitudeCm = 12.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	float NoiseScale = 0.03f;
+
+	/**
+	 * 只在"朝向 NoiseDirection 的那一面"加噪声起伏，其余五面保持平整。
+	 *
+	 * 为什么要这个：分块拼矿洞时，如果每块六面都起伏，相邻块在交界面上
+	 * 各自算出不同的高度 —— 要么露缝要么重叠错位。只让暴露面起伏，
+	 * 其余五面就是纯粹的盒面（BoxDist = 0），两块能严丝合缝贴住。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	bool bDirectionalNoise = false;
+
+	/** 暴露面的朝向（局部空间，填 ±X / ±Y / ±Z 之一）。配合 bDirectionalNoise 用 */
+	UPROPERTY(EditAnywhere, Category = "Dig")
+	FVector NoiseDirection = FVector(0.f, 0.f, 1.f);
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
 	TArray<FDigHole> DigHoles;
@@ -96,9 +110,12 @@ public:
 	 * 剩余实体的最长边小于这个值（cm）就当作已经挖空。
 	 * 挖到最后会剩下一些噪声造成的孤立小碎渣，玩家打不着，表现为"永远挖不完"。
 	 * 设 0 = 永远保留（调试用）。
+	 *
+	 * 注意别设得比 DropSizeSmallCm 还大：那样"最后一下"会直接判定为空、
+	 * 连小块都不掉，小块的石头就几乎不会出现。现在 15 < 小块 20，OK。
 	 */
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0"))
-	float DepletedSizeCm = 20.f;
+	float DepletedSizeCm = 15.f;
 
 	/** 挖下来的石头用哪个 Actor 类生成。留空则只打日志、不生成实物 */
 	UPROPERTY(EditAnywhere, Category = "Dig")
@@ -114,13 +131,13 @@ public:
 
 	// 掉落物目标尺寸（最长边，厘米）。洞口直径是 40cm，石头要比它小。
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DropSizeSmallCm = 12.f;
+	float DropSizeSmallCm = 20.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DropSizeMediumCm = 22.f;
+	float DropSizeMediumCm = 30.f;
 
 	UPROPERTY(EditAnywhere, Category = "Dig")
-	float DropSizeLargeCm = 32.f;
+	float DropSizeLargeCm = 40.f;
 
 protected :
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -166,7 +183,25 @@ public:
 	};
 
 	/** 在世界坐标 WorldLocation 处挖一个半径 RadiusCm 的球洞，并重建网格 */
-	void DigAt(const FVector& WorldLocation, float RadiusCm);
+	/**
+	 * 只挖，不产生掉落。返回这一块被挖掉的体积（cm³）。
+	 * 一次挥击的球会切到相邻好几块，调用方要把各块的返回值加起来，
+	 * 最后统一调一次 SpawnDropForRemovedVolume —— 这样一刀只掉一块石头。
+	 */
+	float CarveAt(const FVector& WorldLocation, float RadiusCm);
+
+	/**
+	 * 按"这一次总共挖掉了多少体积"生成一个掉落物。
+	 * @param RemovedVolumeCm3  本次挥击在所有块上挖掉的体积总和
+	 * @param SphereVolumeCm3   挖掘球的体积（用来算"实心比"）
+	 */
+	void SpawnDropForRemovedVolume(float RemovedVolumeCm3, float SphereVolumeCm3, const FVector& WorldLocation);
+
+	/**
+	 * 挖掉一个球（自己挖自己掉，单块用法）。
+	 * @param bSpawnDrop  false = 只挖不掉
+	 */
+	void DigAt(const FVector& WorldLocation, float RadiusCm, bool bSpawnDrop = true);
 
 	/** 估算挖掉这个球会移除多少体积（cm³）。随机撒 64 个点，用实心比例 × 球体积 */
 	double EstimateRemovedVolume(const FVector3d& Center, float RadiusCm) const;

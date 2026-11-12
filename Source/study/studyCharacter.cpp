@@ -14,6 +14,8 @@
 #include "DigVolume.h"
 #include "DropItem.h"
 #include "studyGameState.h"
+#include "studyGameInstance.h"
+#include "Engine/OverlapResult.h"
 #include "study.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -202,6 +204,13 @@ void AstudyCharacter::RequestRestart()
 	// GetCurrentLevelName 的第二个参数会把 PIE 前缀（UEDPIE_0_）去掉，
 	// 不去的话在编辑器里会找不到关卡名。
 	const FString LevelName = UGameplayStatics::GetCurrentLevelName(this, /*bRemovePrefixString*/ true);
+
+	// 清掉"已开局"标记，这样新关卡 BeginPlay 时会 ResetRun 重开一局
+	if (UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this)))
+	{
+		GI->bRunStarted = false;
+	}
+
 	UE_LOG(LogTemplateCharacter, Warning, TEXT("[Match] 按 R 重开：%s"), *LevelName);
 	UGameplayStatics::OpenLevel(this, FName(*LevelName));
 }
@@ -465,11 +474,51 @@ void AstudyCharacter::PerformDig()
 
 	if (bHit)
 	{
-		if (ADigVolume* DigVolume = Cast<ADigVolume>(Hit.GetActor()))
-		{
-			DigVolume->DigAt(Hit.ImpactPoint, 20.f);
+		// 一次挖掘是一个半径 DigRadiusCm 的球，它会同时切到相邻的好几块。
+		// 如果只挖射线打中的那一块，洞的边缘就会被邻居的实体挡住 ——
+		// 玩家看到的现像就是"挖了但挖不穿 / 挖开又合上"。
+		//
+		// 做法：把球碰到的所有 DigVolume 都挖一遍，
+		// **把各块挖掉的体积加起来**，最后只生成【一块】掉落物。
+		ADigVolume* Primary = Cast<ADigVolume>(Hit.GetActor());
 
-			// 挖中了才震一下（打空气不震）
+		TArray<FOverlapResult> Overlaps;
+		const FCollisionShape DigSphere = FCollisionShape::MakeSphere(DigRadiusCm);
+		GetWorld()->OverlapMultiByChannel(
+			Overlaps, Hit.ImpactPoint, FQuat::Identity, ECC_Visibility, DigSphere, Params);
+
+		float TotalRemovedCm3 = 0.f;
+		ADigVolume* AnyDugVolume = nullptr;
+
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			if (ADigVolume* Vol = Cast<ADigVolume>(Overlap.GetActor()))
+			{
+				const float Removed = Vol->CarveAt(Hit.ImpactPoint, DigRadiusCm);
+				TotalRemovedCm3 += Removed;
+				if (Removed > 0.f && !AnyDugVolume)
+				{
+					AnyDugVolume = Vol;
+				}
+			}
+		}
+
+		// 兜底：范围查询没碰到（碰撞体和网格可能有偏差），至少挖掉射线打到的那块
+		if (!AnyDugVolume && Primary)
+		{
+			TotalRemovedCm3 += Primary->CarveAt(Hit.ImpactPoint, DigRadiusCm);
+			AnyDugVolume = Primary;
+		}
+
+		if (TotalRemovedCm3 > 0.f && AnyDugVolume)
+		{
+			// 挖掘球的体积，用来算"这一下挖到的实心比例"
+			const float SphereVolumeCm3 = static_cast<float>(
+				4.0 / 3.0 * PI * FMath::Pow(static_cast<double>(DigRadiusCm), 3.0));
+
+			AnyDugVolume->SpawnDropForRemovedVolume(TotalRemovedCm3, SphereVolumeCm3, Hit.ImpactPoint);
+
+			// 真挖到东西了才震（打空气不震）
 			TriggerDigShake();
 		}
 	}

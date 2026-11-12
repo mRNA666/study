@@ -41,6 +41,36 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	float TimeRemaining = 0.f;
 
+	/** 第几天（从 1 开始）。跨关卡的真值在 GameInstance 里，这里只是给 HUD 看的副本 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	int32 DayIndex = 1;
+
+	/** 游戏内时间，单位分钟。480 = 8:00，1080 = 18:00 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	float ClockMinutes = 480.f;
+
+	/** 结算时的最终现金（含未卖金重的折算） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	int32 FinalCash = 0;
+
+	UFUNCTION(BlueprintPure, Category = "Match")
+	int32 GetDayIndex() const { return DayIndex; }
+
+	UFUNCTION(BlueprintPure, Category = "Match")
+	float GetClockMinutes() const { return ClockMinutes; }
+
+	UFUNCTION(BlueprintPure, Category = "Match")
+	int32 GetFinalCash() const { return FinalCash; }
+
+	/** 服务器调用：更新天数与时钟 */
+	void SetClock(float InMinutes, int32 InDay);
+
+	/** 服务器调用：结算分数 */
+	void SetFinalCash(int32 InCash) { FinalCash = InCash; }
+
+	/** 黑市收购价系数（好感度"熟人"档 65%，见 PRD §2.9） */
+	static constexpr float BlackMarketRate = 0.65f;
+
 	/**
 	 * 每个玩家已交回的黄金克数。索引 = 玩家序号。
 	 * 现在单机只有索引 0；联机时改成按 PlayerState 映射。
@@ -59,8 +89,32 @@ public:
 	/** 一共卸了几趟货（结算面板显示用） */
 	int32 GetUnloadCount() const { return UnloadCount; }
 
-	/** 只在服务器调用：卸货时加分 */
+	/**
+	 * 每个玩家的现金（币）。索引 = 玩家序号；现在单机只有 0。
+	 * 注意：现金**不会**在卸货时自动产生 —— 必须把金重卖给商人（见 SellAllGold）。
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	TArray<int32> PlayerCash;
+
+	/** 读某个玩家的现金（索引越界返回 0） */
+	UFUNCTION(BlueprintPure, Category = "Match")
+	int32 GetCash(int32 PlayerIndex) const;
+
+	/** 花现金：够就扣掉并返回 true，不够返回 false 不扣 */
+	bool SpendCash(int32 PlayerIndex, int32 Amount);
+
+	/**
+	 * 把某个玩家的全部金重按 PricePerGram 卖掉（PRD §2.9 的成交公式）。
+	 * @param PricePerGram  实际成交单价 = 正规基准价 × 好感度系数 × 市场乘数
+	 * @return 这次得到的现金（没有金可卖返回 0）
+	 */
+	int32 SellAllGold(int32 PlayerIndex, int32 PricePerGram);
+
+	/** 只在服务器调用：卸货时**只加金重**，不产生现金 */
 	void AddGoldGrams(int32 PlayerIndex, float Grams);
+
+	/** 正规基准价：1 g 黄金 = 1000 币（PRD §2.9 成交公式里的"正规基准价"） */
+	static constexpr int32 BasePricePerGram = 1000;
 
 	/** 读阶段。HUD / Character 用这个，不要直接碰成员变量 */
 	UFUNCTION(BlueprintPure, Category = "Match")

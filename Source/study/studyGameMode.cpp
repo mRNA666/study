@@ -1,11 +1,30 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "studyGameMode.h"
 #include "BagHUD.h"
 #include "studyGameState.h"
+#include "studyGameInstance.h"
 #include "UObject/ConstructorHelpers.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Engine/StaticMeshActor.h"
+#include "Components/LightComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "MineGenerator.h"
+
+namespace
+{
+	/** 把"分钟"格式化成 08:35 */
+	FString FormatClock(float Minutes)
+	{
+		const int32 Total = FMath::FloorToInt(Minutes);
+		return FString::Printf(TEXT("%02d:%02d"), Total / 60, Total % 60);
+	}
+}
 
 AstudyGameMode::AstudyGameMode()
 {
@@ -26,7 +45,7 @@ AstudyGameMode::AstudyGameMode()
 	// 注意：这个值在蓝图里可以被覆盖，所以 BeginPlay 里还要检查一遍
 	GameStateClass = AstudyGameState::StaticClass();
 
-	// GameMode 默认不 Tick，但倒计时需要它
+	// 时钟推进需要 Tick
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 }
@@ -36,6 +55,8 @@ void AstudyGameMode::BeginPlay()
 	Super::BeginPlay();
 
 	AstudyGameState* GS = GetStudyGameState();
+	UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this));
+
 	if (!GS)
 	{
 		// BP 里如果手动改过 "Game State Class"，构造函数里的设置会被它的存档值覆盖
@@ -45,18 +66,52 @@ void AstudyGameMode::BeginPlay()
 		return;
 	}
 
-	GS->SetPhase(EGamePhase::WaitingToStart);
-	UE_LOG(LogTemp, Log, TEXT("[Match] 准备开始：%.1f 秒后开局，一局 %.0f 秒"),
-		StartDelaySeconds, MatchDurationSeconds);
-
-	if (StartDelaySeconds <= 0.f)
+	if (!GI)
 	{
-		StartMatch();
+		UE_LOG(LogTemp, Error,
+			TEXT("[Match] Game Instance 不是 studyGameInstance！"
+				 "请到 项目设置 → 地图和模式 → Game Instance Class 选 studyGameInstance"));
+		return;
 	}
-	else
+
+	// 第一次进入（或按 R 重开之后 bRunStarted 被清掉）：重置整局
+	if (!GI->bRunStarted)
 	{
-		GetWorldTimerManager().SetTimer(
-			StartTimerHandle, this, &AstudyGameMode::StartMatch, StartDelaySeconds, /*bLoop*/ false);
+		GI->ResetRun();
+		GI->bRunStarted = true;
+	}
+
+	GS->SetClock(GI->ClockMinutes, GI->DayIndex);
+	GS->SetFinalCash(GI->Cash);
+	GS->SetPhase(EGamePhase::InProgress);
+
+	EnsureWorldBasics();
+
+	UE_LOG(LogTemp, Log, TEXT("[Match] 开局：第 %d 天 %s"), GI->DayIndex, *FormatClock(GI->ClockMinutes));
+}
+
+void AstudyGameMode::EnsureWorldBasics()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const FString MapName = World->GetMapName();
+
+	// 营地：用编辑器的 Basic 模板（自带地板 / 天空 / 阳光），这里什么都不做。
+	// 矿洞：运行时生成整个洞（底面 + 四面墙 + 顶）。
+	if (MapName.Contains(TEXT("Mine")))
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		if (AMineGenerator* Gen = World->SpawnActor<AMineGenerator>(
+			AMineGenerator::StaticClass(), FTransform::Identity, SpawnParams))
+		{
+			UE_LOG(LogTemp, Log, TEXT("[Match] 矿洞生成器已启动"));
+		}
 	}
 }
 
@@ -65,63 +120,64 @@ AstudyGameState* AstudyGameMode::GetStudyGameState() const
 	return GetGameState<AstudyGameState>();
 }
 
-void AstudyGameMode::StartMatch()
-{
-	AstudyGameState* GS = GetStudyGameState();
-	if (!GS || !GetWorld())
-	{
-		return;
-	}
-
-	// 先记下结束时刻，再切阶段（顺序反了会让第一帧的剩余时间算错）
-	MatchEndTimeSeconds = GetWorld()->GetTimeSeconds() + MatchDurationSeconds;
-
-	GS->SetTimeRemaining(MatchDurationSeconds);
-	GS->SetPhase(EGamePhase::InProgress);
-
-	UE_LOG(LogTemp, Log, TEXT("[Match] 开局"));
-}
-
-void AstudyGameMode::EndMatch()
-{
-	AstudyGameState* GS = GetStudyGameState();
-	if (!GS)
-	{
-		return;
-	}
-
-	GS->SetTimeRemaining(0.f);
-	GS->SetPhase(EGamePhase::Finished);
-
-	// 冻结移动和转视角。注意：不禁用整个输入组件 ——
-	// 将来"按 R 重开"还要响应按键，所以只关移动/视角这一层。
-	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
-	{
-		PC->SetIgnoreMoveInput(true);
-		PC->SetIgnoreLookInput(true);
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[Match] 结束"));
-}
-
 void AstudyGameMode::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
 	AstudyGameState* GS = GetStudyGameState();
-	if (!GS || !GetWorld() || GS->GetPhase() != EGamePhase::InProgress)
+	UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this));
+	if (!GS || !GI || GS->GetPhase() != EGamePhase::InProgress)
 	{
 		return;
 	}
 
-	// 剩余 = 结束时间戳 - 当前世界时间。
-	// 用 GetTimeSeconds（游戏时间）而不是 GetRealTimeSeconds（墙上时间），
-	// 这样以后加暂停 / 子弹时间，对局时钟会跟着慢下来。
-	const float Remaining = static_cast<float>(MatchEndTimeSeconds - GetWorld()->GetTimeSeconds());
-	GS->SetTimeRemaining(FMath::Max(Remaining, 0.f));
+	// 推进游戏时钟：1 游戏小时 = RealSecondsPerGameHour 真实秒
+	// （默认 60 秒 → 1 真实秒 = 1 游戏分钟，8:00 → 18:00 正好 10 分钟）
+	if (!GI->IsDayOver())
+	{
+		const float GameMinutesPerSecond = 60.f / FMath::Max(UstudyGameInstance::RealSecondsPerGameHour, 1.f);
+		GI->ClockMinutes += DeltaSeconds * GameMinutesPerSecond;
+		GI->ClampClock();
+		GS->SetClock(GI->ClockMinutes, GI->DayIndex);
+	}
 
-	if (Remaining <= 0.f)
+	// 最后一天 18:00 → 结算
+	if (GI->DayIndex >= UstudyGameInstance::TotalDays && GI->IsDayOver())
 	{
 		EndMatch();
+	}
+}
+
+void AstudyGameMode::EndMatch()
+{
+	AstudyGameState* GS = GetStudyGameState();
+	UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this));
+	if (!GS || !GI || GS->GetPhase() == EGamePhase::Finished)
+	{
+		return;
+	}
+
+	// 剩下没卖的金重按黑市收购价（PRD §2.9：好感度"熟人"档 65%）折算进现金
+	const float UnsoldGrams = GI->GoldGrams;
+	const int32 UnsoldCash = FMath::RoundToInt(
+		UnsoldGrams
+		* AstudyGameState::BlackMarketRate
+		* static_cast<float>(AstudyGameState::BasePricePerGram));
+
+	GI->Cash += UnsoldCash;
+	GI->GoldGrams = 0.f;
+	GI->bRunFinished = true;
+
+	GS->SetFinalCash(GI->Cash);
+	GS->SetPhase(EGamePhase::Finished);
+
+	UE_LOG(LogTemp, Log, TEXT("[Match] 结算：未卖 %.1f g 折算 +%d 币，最终现金 %d 币"),
+		UnsoldGrams, UnsoldCash, GI->Cash);
+
+	// 冻结移动和转视角（不禁用输入组件，按 R 重开还要用）
+	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		PC->SetIgnoreMoveInput(true);
+		PC->SetIgnoreLookInput(true);
 	}
 }

@@ -38,6 +38,17 @@ void AstudyGameState::SetPhase(EGamePhase NewPhase)
 	OnRep_Phase();
 }
 
+void AstudyGameState::SetClock(float InMinutes, int32 InDay)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	ClockMinutes = InMinutes;
+	DayIndex = InDay;
+}
+
 void AstudyGameState::SetTimeRemaining(float NewRemaining)
 {
 	if (!HasAuthority())
@@ -63,8 +74,64 @@ void AstudyGameState::AddGoldGrams(int32 PlayerIndex, float Grams)
 	PlayerGoldGrams[PlayerIndex] += Grams;
 	UnloadCount++;
 
-	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卸货 +%.1f g，本局累计 %.1f g（第 %d 趟）"),
+	// 注意：这里**只加金重**。现金要等玩家把金卖给商人（SellAllGold）才会产生。
+	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卸货 +%.1f g，金重累计 %.1f g（第 %d 趟）"),
 		PlayerIndex, Grams, PlayerGoldGrams[PlayerIndex], UnloadCount);
+}
+
+int32 AstudyGameState::GetCash(int32 PlayerIndex) const
+{
+	return PlayerCash.IsValidIndex(PlayerIndex) ? PlayerCash[PlayerIndex] : 0;
+}
+
+bool AstudyGameState::SpendCash(int32 PlayerIndex, int32 Amount)
+{
+	if (!HasAuthority() || PlayerIndex < 0 || Amount <= 0)
+	{
+		return false;
+	}
+
+	if (GetCash(PlayerIndex) < Amount)
+	{
+		return false;
+	}
+
+	PlayerCash[PlayerIndex] -= Amount;
+	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 花了 %d 币，剩 %d 币"),
+		PlayerIndex, Amount, PlayerCash[PlayerIndex]);
+	return true;
+}
+
+int32 AstudyGameState::SellAllGold(int32 PlayerIndex, int32 PricePerGram)
+{
+	if (!HasAuthority() || PlayerIndex < 0 || PricePerGram <= 0)
+	{
+		return 0;
+	}
+
+	if (!PlayerGoldGrams.IsValidIndex(PlayerIndex))
+	{
+		return 0;
+	}
+
+	const float Grams = PlayerGoldGrams[PlayerIndex];
+	if (Grams <= 0.f)
+	{
+		return 0;
+	}
+
+	const int32 Earned = FMath::RoundToInt(Grams * static_cast<float>(PricePerGram));
+
+	if (!PlayerCash.IsValidIndex(PlayerIndex))
+	{
+		PlayerCash.SetNum(PlayerIndex + 1);
+	}
+	PlayerCash[PlayerIndex] += Earned;
+	PlayerGoldGrams[PlayerIndex] = 0.f;
+
+	UE_LOG(LogTemp, Log, TEXT("[Match] 玩家 %d 卖掉 %.1f g（单价 %d）→ +%d 币，现金 %d"),
+		PlayerIndex, Grams, PricePerGram, Earned, PlayerCash[PlayerIndex]);
+	return Earned;
 }
 
 float AstudyGameState::GetGoldGrams(int32 PlayerIndex) const
@@ -85,4 +152,8 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AstudyGameState, TimeRemaining);
 	DOREPLIFETIME(AstudyGameState, PlayerGoldGrams);
 	DOREPLIFETIME(AstudyGameState, UnloadCount);
+	DOREPLIFETIME(AstudyGameState, PlayerCash);
+	DOREPLIFETIME(AstudyGameState, DayIndex);
+	DOREPLIFETIME(AstudyGameState, ClockMinutes);
+	DOREPLIFETIME(AstudyGameState, FinalCash);
 }
