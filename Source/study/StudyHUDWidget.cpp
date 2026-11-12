@@ -122,9 +122,9 @@ void UStudyHUDWidget::BuildLayout()
 			S->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		}
 
-		// 金重
+		// 仓库黄金（累计已交回的，只在回营地时变）
 		UHorizontalBox* GoldRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		GoldRow->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("金重"), 16, Dim));
+		GoldRow->AddChildToHorizontalBox(MakeText(WidgetTree, TEXT("仓库黄金"), 16, Dim));
 		GoldText = MakeText(WidgetTree, TEXT("0.0 g"), 24, Gold, true);
 		if (UHorizontalBoxSlot* S = Cast<UHorizontalBoxSlot>(GoldRow->AddChildToHorizontalBox(GoldText)))
 		{
@@ -371,17 +371,20 @@ void UStudyHUDWidget::Refresh()
 		WeightText->SetColorAndOpacity(FSlateColor(LoadColor));
 	}
 
-	// ---- 金重 / 现金 ----
-	if (GoldText)
-	{
-		GoldText->SetText(FText::FromString(FString::Printf(TEXT("%.1f g"), Character->GetCarriedGoldGrams())));
-	}
-
-	// 现金的真值在 GameInstance 里（商人卖金写的是它），HUD 必须读同一份
+	// ---- 仓库黄金 / 现金 ----
+	// 金重（背包里背着的）不显示：矿洞里只该看到背包重量在变。
+	// 交到暂存点/卸货区之后才累加进"仓库黄金"，回营地时统一结算。
 	int32 Cash = 0;
+	float StoredGold = 0.f;
 	if (UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this)))
 	{
 		Cash = GI->Cash;
+		StoredGold = GI->GoldGrams;
+	}
+
+	if (GoldText)
+	{
+		GoldText->SetText(FText::FromString(FString::Printf(TEXT("%.1f g"), StoredGold)));
 	}
 	if (CashText)
 	{
@@ -402,7 +405,15 @@ void UStudyHUDWidget::Refresh()
 		}
 		if (AMerchant* M = Character->GetNearbyMerchant())
 		{
-			Hint = FString::Printf(TEXT("按  E  和「%s」说话"), *M->DisplayName);
+			// 床用专门的提示语
+			if (M->Kind == EMerchantKind::Bed)
+			{
+				Hint = TEXT("按  E  睡觉");
+			}
+			else
+			{
+				Hint = FString::Printf(TEXT("按  E  和「%s」说话"), *M->DisplayName);
+			}
 		}
 		HintText->SetText(FText::FromString(Hint));
 		HintText->SetVisibility(Hint.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
@@ -411,14 +422,25 @@ void UStudyHUDWidget::Refresh()
 	// ---- 一次性提示 ----
 	if (NoticeText && GS)
 	{
-		const bool bShow = (GS->GetNoticeTimeLeft() > 0.f && GS->GetNoticeGoldGrams() > 0.f);
+		FString Msg;
+		if (!GS->GetNoticeText().IsEmpty())
+		{
+			Msg = GS->GetNoticeText();
+		}
+		else if (GS->GetNoticeGoldGrams() > 0.f)
+		{
+			Msg = FString::Printf(TEXT("本趟带回   %.1f g   黄金"), GS->GetNoticeGoldGrams());
+		}
+
+		const bool bShow = (!Msg.IsEmpty() && GS->GetNoticeTimeLeft() > 0.f);
+
 		if (bShow)
 		{
-			NoticeText->SetText(FText::FromString(
-				FString::Printf(TEXT("本趟带回   %.1f g   黄金"), GS->GetNoticeGoldGrams())));
+			NoticeText->SetText(FText::FromString(Msg));
 			NoticeText->SetColorAndOpacity(FSlateColor(FLinearColor(1.f, 0.84f, 0.30f,
 				FMath::Clamp(GS->GetNoticeTimeLeft() / 1.5f, 0.f, 1.f))));
 		}
+
 		NoticeText->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
@@ -430,9 +452,14 @@ void UStudyHUDWidget::Refresh()
 
 		if (bFinished)
 		{
-			SettlementCashText->SetText(FText::FromString(FText::AsNumber(GS->GetFinalCash()).ToString()));
-			SettlementInfoText->SetText(FText::FromString(
-				FString::Printf(TEXT("卸货 %d 趟   ·   未卖黄金已按 65%% 折算"), GS->GetUnloadCount())));
+			const int32 Total = GS->GetFinalCash();
+			const int32 Unsold = GS->GetFinalUnsoldCash();
+			const int32 Sold = Total - Unsold;
+
+			SettlementCashText->SetText(FText::FromString(FText::AsNumber(Total).ToString()));
+			SettlementInfoText->SetText(FText::FromString(FString::Printf(
+				TEXT("卖金所得 %d  +  未卖黄金折算 %d\n卸货 %d 趟"),
+				Sold, Unsold, GS->GetUnloadCount())));
 		}
 	}
 

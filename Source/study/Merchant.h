@@ -20,7 +20,13 @@ enum class EMerchantKind : uint8
 	SellGold UMETA(DisplayName = "收黄金"),
 
 	/** 矿洞里的向导：提前返回 / 查看已存放的黄金 */
-	MineGuide UMETA(DisplayName = "矿洞向导")
+	MineGuide UMETA(DisplayName = "矿洞向导"),
+
+	/** 床：睡到下一天 */
+	Bed UMETA(DisplayName = "床"),
+
+	/** 正规买家：第二天白天来，全额收，每天有配额 */
+	LegitBuyer UMETA(DisplayName = "正规买家")
 };
 
 /**
@@ -62,6 +68,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
 	float InteractRadiusCm = 250.f;
 
+	/** 隐藏白色机器人（床用它，自己另外摆一个长方体） */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
+	bool bHideBody = false;
+
 	UFUNCTION(BlueprintPure, Category = "Merchant")
 	bool IsInRange(const AActor* Other) const;
 
@@ -84,6 +94,9 @@ protected:
 
 	/** 把玩家的金重按黑市价卖出指定克数 */
 	void SellGold(float Grams);
+
+	/** 卖给正规买家：全额，但要吃配额 */
+	void SellGoldLegit(float Grams);
 
 	/** 尝试买一次开采权并传送进矿洞。返回 false = 钱不够 */
 	bool BuyMineRight();

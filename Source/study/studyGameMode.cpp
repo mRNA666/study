@@ -88,17 +88,29 @@ void AstudyGameMode::BeginPlay()
 	GS->SetFinalCash(GI->Cash);
 	GS->SetPhase(EGamePhase::InProgress);
 
-	// 回到营地：把矿洞暂存点收下的金重一次性结算，并弹一条提示
+	// 回到营地：把矿洞暂存点收下的金重一次性结算，并弹提示
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
-	if (MapName.Contains(TEXT("Camp")) && GI->StashedGoldGrams > 0.f)
+	if (MapName.Contains(TEXT("Camp")))
 	{
-		const float BroughtBack = GI->StashedGoldGrams;
-		GI->GoldGrams += BroughtBack;
-		GI->StashedGoldGrams = 0.f;
+		FString Msg = GI->CampNoticeText;
+		GI->CampNoticeText.Reset();
 
-		GS->ShowGoldNotice(BroughtBack, 6.f);
-		UE_LOG(LogTemp, Log, TEXT("[Stash] 回到营地结算：+%.1f g，金重累计 %.1f g"),
-			BroughtBack, GI->GoldGrams);
+		if (GI->StashedGoldGrams > 0.f)
+		{
+			const float BroughtBack = GI->StashedGoldGrams;
+			GI->GoldGrams += BroughtBack;
+			GI->StashedGoldGrams = 0.f;
+
+			const FString GoldLine = FString::Printf(TEXT("本趟带回 %.1f g 黄金"), BroughtBack);
+			Msg = Msg.IsEmpty() ? GoldLine : (Msg + TEXT("\n") + GoldLine);
+
+			UE_LOG(LogTemp, Log, TEXT("[Stash] 回到营地结算：+%.1f g，金重累计 %.1f g"), BroughtBack, GI->GoldGrams);
+		}
+
+		if (!Msg.IsEmpty())
+		{
+			GS->ShowTextNotice(Msg, 7.f);
+		}
 	}
 
 	EnsureWorldBasics();
@@ -157,15 +169,128 @@ void AstudyGameMode::SpawnCampMerchants()
 
 		M->Kind = Kind;
 		M->DisplayName = InName;
+		M->bHideBody = (Kind == EMerchantKind::Bed);		// 床不显示白色机器人
 		M->FinishSpawning(Xf);
 	};
 
-	// 一个卖开采权（你花钱下矿），一个收黄金（黑市价 65%）
+	// 一个卖开采权（你花钱下矿），一个收黄金（黑市价 65%），一张床
 	SpawnOne(EMerchantKind::BuyMineRight, TEXT("矿长"), FVector(350.f, 250.f, 0.f));
 	SpawnOne(EMerchantKind::SellGold, TEXT("黑市金商"), FVector(-350.f, 250.f, 0.f));
+	SpawnOne(EMerchantKind::Bed, TEXT("床"), FVector(0.f, -350.f, 0.f));
+
+	// 正规买家：第 2 天才出现（第 1 天他"还没来"）
+	if (GetStudyGameState() && GetStudyGameState()->GetDayIndex() >= 2)
+	{
+		SpawnOne(EMerchantKind::LegitBuyer, TEXT("正规买家"), FVector(0.f, 450.f, 0.f));
+	}
+
+	// 床的实体：一个扁长方体（机器人已经被 bHideBody 藏掉了）
+	{
+		if (UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
+		{
+			const FVector BedLoc = Origin + FVector(0.f, -350.f, 10.f);
+			const FTransform BedXf(FRotator::ZeroRotator, BedLoc, FVector(2.0f, 1.0f, 0.2f));
+
+			if (AStaticMeshActor* Bed = World->SpawnActorDeferred<AStaticMeshActor>(
+				AStaticMeshActor::StaticClass(), BedXf, nullptr, nullptr,
+				ESpawnActorCollisionHandlingMethod::AlwaysSpawn))
+			{
+				if (UStaticMeshComponent* Comp = Bed->GetStaticMeshComponent())
+				{
+					Comp->SetMobility(EComponentMobility::Movable);
+					Comp->SetStaticMesh(CubeMesh);
+				}
+				Bed->FinishSpawning(BedXf);
+			}
+		}
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("[Match] 营地商人已就位（基准点 %.0f,%.0f,%.0f）"),
 		Origin.X, Origin.Y, Origin.Z);
+}
+
+void AstudyGameMode::UpdateDayNightLighting()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 只在营地改光：矿洞本来就该是黑的
+	if (!World->GetMapName().Contains(TEXT("Camp")))
+	{
+		return;
+	}
+
+	if (!SunLight.IsValid())
+	{
+		for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+		{
+			SunLight = *It;
+			break;
+		}
+
+		if (SunLight.IsValid())
+		{
+			if (ULightComponent* LC = SunLight->GetLightComponent())
+			{
+				// Basic 模板里的太阳是 Stationary，运行时改强度/角度要转成 Movable
+				LC->SetMobility(EComponentMobility::Movable);
+			}
+		}
+	}
+
+	if (!SkyLightActor.IsValid())
+	{
+		for (TActorIterator<ASkyLight> It(World); It; ++It)
+		{
+			SkyLightActor = *It;
+			break;
+		}
+
+		if (SkyLightActor.IsValid())
+		{
+			if (USkyLightComponent* SC = SkyLightActor->GetLightComponent())
+			{
+				SC->SetMobility(EComponentMobility::Movable);
+			}
+		}
+	}
+
+	UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this));
+	if (!GI)
+	{
+		return;
+	}
+
+	// 0 = 8:00（太阳高挂），1 = 20:00（太阳落山）
+	const float Span = FMath::Max(
+		UstudyGameInstance::DayEndMinutes - UstudyGameInstance::DayStartMinutes, 1.f);
+	const float Alpha = FMath::Clamp(
+		(GI->ClockMinutes - UstudyGameInstance::DayStartMinutes) / Span, 0.f, 1.f);
+
+	// 越晚越暗（平方让前半天几乎不变，后半段才明显暗下来）
+	const float Dim = Alpha * Alpha;
+
+	if (SunLight.IsValid())
+	{
+		if (ULightComponent* LC = SunLight->GetLightComponent())
+		{
+			LC->SetIntensity(FMath::Lerp(10.f, 0.15f, Dim));
+		}
+
+		// 俯仰从 -70°（高）压到 -5°（贴地平线）
+		SunLight->SetActorRotation(FRotator(FMath::Lerp(-70.f, -5.f, Alpha), 30.f, 0.f));
+	}
+
+	if (SkyLightActor.IsValid())
+	{
+		if (USkyLightComponent* SC = SkyLightActor->GetLightComponent())
+		{
+			SC->SetIntensity(FMath::Lerp(1.f, 0.05f, Dim));
+		}
+	}
 }
 
 void AstudyGameMode::EnsureWorldBasics()
@@ -226,14 +351,33 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 		GS->SetClock(GI->ClockMinutes, GI->DayIndex);
 	}
 
-	// 最后一天 20:00 → 结算
-	if (GI->DayIndex >= UstudyGameInstance::TotalDays && GI->IsDayOver())
+	// 昼夜光照（只在营地生效）
+	UpdateDayNightLighting();
+
+	// 矿洞里：过了 20:00 立刻送回营地，并扣向导来接的路费
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Mine")) && GI->IsDayOver())
 	{
-		EndMatch();
+		GI->MineTimeLeft = 0.f;
+		GI->MineStopClockMinutes = 0.f;
+		GS->SetMineStopClock(0.f);
+
+		// 背包里没交的黄金先带走，别让人白挖
+		UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+
+		GI->Cash = FMath::Max(GI->Cash - UstudyGameInstance::LatePickupFee, 0);
+		GI->CampNoticeText = FString::Printf(
+			TEXT("太晚了，向导已经回去了。\n你要支付他来接你的路费 %d 币。"),
+			UstudyGameInstance::LatePickupFee);
+
+		UE_LOG(LogTemp, Log, TEXT("[Mine] 20:00 还在矿洞，扣路费 %d 币，送回营地"),
+			UstudyGameInstance::LatePickupFee);
+
+		UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		return;
 	}
 
 	// 矿洞里：开采倒计时，到点强制送回营地
-	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
 	if (MapName.Contains(TEXT("Mine")) && GI->MineTimeLeft > 0.f)
 	{
 		GI->MineTimeLeft -= DeltaSeconds;
@@ -256,6 +400,19 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 	{
 		GS->SetMineStopClock(0.f);
 	}
+
+	// 最后一天 20:00 → 结算。
+	// 放在矿洞那两段之后：先保证人被送回营地（上面 OpenLevel 会直接 return），
+	// 下一帧在营地里才结算，玩家能看到自己站在营地里看到结算面板。
+	if (GI->DayIndex >= UstudyGameInstance::TotalDays && GI->IsDayOver())
+	{
+		EndMatch();
+	}
+}
+
+void AstudyGameMode::ForceSettle()
+{
+	EndMatch();
 }
 
 void AstudyGameMode::EndMatch()
@@ -278,6 +435,7 @@ void AstudyGameMode::EndMatch()
 	GI->GoldGrams = 0.f;
 	GI->bRunFinished = true;
 
+	GS->SetFinalUnsoldCash(UnsoldCash);
 	GS->SetFinalCash(GI->Cash);
 	GS->SetPhase(EGamePhase::Finished);
 

@@ -16,6 +16,8 @@ void UstudyGameInstance::ResetRun()
 	Cash = StartingCash;
 	GoldGrams = 0.f;
 	StashedGoldGrams = 0.f;
+	BuyerQuotaGrams = BuyerQuotaPerDay;
+	CampNoticeText.Reset();
 	bRunFinished = false;
 
 	UE_LOG(LogTemp, Log, TEXT("[Run] 新的一局开始（%d 天）"), TotalDays);
@@ -26,8 +28,8 @@ void UstudyGameInstance::SleepToNextDay()
 	DayIndex++;
 	ClockMinutes = DayStartMinutes;
 	RightsBoughtToday = 0;
+	BuyerQuotaGrams = BuyerQuotaPerDay;		// 正规买家第二天又有配额
 
-	// 第 2 天睡过去之后就没有第 3 天了，交给 GameMode 去结算
 	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00"), DayIndex);
 }
 

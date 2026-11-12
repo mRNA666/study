@@ -5,6 +5,7 @@
 #include "studyCharacter.h"
 #include "studyGameInstance.h"
 #include "studyGameState.h"
+#include "studyGameMode.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -33,13 +34,19 @@ void AMerchant::BeginPlay()
 	Super::BeginPlay();
 
 	// 白色机器人模型（UE 自带）
-	if (Body && !Body->GetSkeletalMeshAsset())
+	if (Body && !Body->GetSkeletalMeshAsset() && !bHideBody)
 	{
 		if (USkeletalMesh* Manny = LoadObject<USkeletalMesh>(nullptr,
 			TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple")))
 		{
 			Body->SetSkeletalMeshAsset(Manny);
 		}
+	}
+
+	// 床这种自己另有外观的，把机器人藏掉
+	if (Body && bHideBody)
+	{
+		Body->SetVisibility(false);
 	}
 }
 
@@ -74,6 +81,60 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI || !Character)
 	{
+		return;
+	}
+
+	// ---- 床：睡到下一天（晚上才用，所以不参与"太晚了"封锁） ----
+	if (Kind == EMerchantKind::Bed)
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		const bool bLastDay = (GI->DayIndex >= UstudyGameInstance::TotalDays);
+
+		TArray<FString> Options;
+		Options.Add(bLastDay
+			? TEXT("睡觉 —— 收工结算")
+			: FString::Printf(TEXT("睡觉，进入第 %d 天"), GI->DayIndex + 1));
+		Options.Add(TEXT("再等等"));
+
+		Character->OpenOptionDialog(
+			DisplayName,
+			bLastDay
+				? TEXT("今天是最后一天了，睡下去这一局就结束。")
+				: FString::Printf(TEXT("第 %d 天要过去了，睡一觉天就亮了。"), GI->DayIndex),
+			Options);
+		return;
+	}
+
+	// ---- 20:00 之后，所有商人都收摊 ----
+	if (GI->IsDayOver())
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		TArray<FString> Options;
+		Options.Add(TEXT("知道了"));
+
+		Character->OpenOptionDialog(DisplayName, TEXT("今天太晚了，明天再来吧。"), Options);
+		return;
+	}
+
+	// ---- 正规买家：全额收，每天有配额 ----
+	if (Kind == EMerchantKind::LegitBuyer)
+	{
+		const float Sellable = FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams);
+		const int32 Estimate = FMath::RoundToInt(Sellable * static_cast<float>(AstudyGameState::BasePricePerGram));
+
+		Character->SetDialogNumberEnabled(Sellable);
+
+		TArray<FString> Options;
+		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → %d 币，全额）"), Sellable, Estimate));
+		Options.Add(TEXT("算了"));
+
+		Character->OpenOptionDialog(
+			DisplayName,
+			FString::Printf(TEXT("正规价：100%%（不压价）\n今天还能收：%.1f g\n你手上有：%.1f g\n现金：%d 币"),
+				GI->BuyerQuotaGrams, GI->GoldGrams, GI->Cash),
+			Options);
 		return;
 	}
 
@@ -157,6 +218,46 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		return;
 	}
 
+	// ---- 床 ----
+	if (Kind == EMerchantKind::Bed)
+	{
+		if (Index == 0)
+		{
+			// 最后一天：睡觉 = 直接收工结算，不进第 3 天
+			if (GI->DayIndex >= UstudyGameInstance::TotalDays)
+			{
+				if (AstudyGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AstudyGameMode>() : nullptr)
+				{
+					UE_LOG(LogTemp, Log, TEXT("[Merchant] 最后一天睡觉 → 结算"));
+					GM->ForceSettle();
+				}
+				return;
+			}
+
+			GI->SleepToNextDay();
+			UE_LOG(LogTemp, Log, TEXT("[Merchant] 睡到第 %d 天"), GI->DayIndex);
+			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		}
+		return;
+	}
+
+	// ---- 正规买家 ----
+	if (Kind == EMerchantKind::LegitBuyer)
+	{
+		if (Index == 0)
+		{
+			SellGoldLegit(FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams));
+			BuildDialog(Character);
+		}
+		return;
+	}
+
+	// 20:00 之后所有对话只有"知道了"，点了不做任何事
+	if (GI->IsDayOver())
+	{
+		return;
+	}
+
 	// ---- 矿洞向导 ----
 	if (Kind == EMerchantKind::MineGuide)
 	{
@@ -215,20 +316,25 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 
 void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
 {
-	if (Kind != EMerchantKind::SellGold)
-	{
-		return;
-	}
-
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI)
 	{
 		return;
 	}
 
-	// 输入比存量还大 → 直接按存量算（不用报错，玩家想卖完就该卖完）
-	const float Clamped = FMath::Clamp(Value, 0.f, GI->GoldGrams);
-	SellGold(Clamped);
+	if (Kind == EMerchantKind::SellGold)
+	{
+		// 输入比存量还大 → 直接按存量算（不用报错，玩家想卖完就该卖完）
+		SellGold(FMath::Clamp(Value, 0.f, GI->GoldGrams));
+	}
+	else if (Kind == EMerchantKind::LegitBuyer)
+	{
+		SellGoldLegit(FMath::Clamp(Value, 0.f, FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams)));
+	}
+	else
+	{
+		return;
+	}
 
 	// 重刷对话框（金重 / 现金 / 可卖数量都变了）
 	if (Character && Character->IsDialogOpen())
@@ -263,6 +369,32 @@ void AMerchant::SellGold(float Grams)
 		*DisplayName, Sold, Earned, GI->GoldGrams, GI->Cash);
 }
 
+void AMerchant::SellGoldLegit(float Grams)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || Grams <= 0.f)
+	{
+		return;
+	}
+
+	// 三个上限取最小：想卖的、手上的、今天剩下的配额
+	const float Sold = FMath::Min(Grams, FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams));
+	if (Sold <= 0.f)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：今天收不了更多了（配额剩 %.1f g）"), *DisplayName, GI->BuyerQuotaGrams);
+		return;
+	}
+
+	const int32 Earned = FMath::RoundToInt(Sold * static_cast<float>(AstudyGameState::BasePricePerGram));
+
+	GI->GoldGrams -= Sold;
+	GI->BuyerQuotaGrams -= Sold;
+	GI->Cash += Earned;
+
+	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 全额收走 %.1f g → +%d 币；配额剩 %.1f g，现金 %d"),
+		*DisplayName, Sold, Earned, GI->BuyerQuotaGrams, GI->Cash);
+}
+
 bool AMerchant::BuyMineRight()
 {
 	UstudyGameInstance* GI = GetRun(this);
@@ -280,11 +412,17 @@ bool AMerchant::BuyMineRight()
 	GI->Cash -= MineRightPrice;
 	GI->RightsBoughtToday++;
 
-	// 一次开采 3 分钟。
-	// 时间换算：1 真实秒 = 1 游戏分钟 → 180 秒 = 180 游戏分钟 = 3 小时。
-	// 所以这里直接加 180 分钟，不要再除以 60。
+	// 一次开采 3 分钟（真实时间）。
+	// 换算成游戏分钟必须跟着流速走：游戏分钟 = 真实秒 × (60 / RealSecondsPerGameHour)。
+	// 写死 +180 只在"1 真实秒 = 1 游戏分钟"时才对，改流速就全错了。
+	const float GameMinutesPerSecond = 60.f / FMath::Max(UstudyGameInstance::RealSecondsPerGameHour, 1.f);
+
 	GI->MineTimeLeft = UstudyGameInstance::MineDurationSeconds;
-	GI->MineStopClockMinutes = GI->ClockMinutes + UstudyGameInstance::MineDurationSeconds;
+
+	// 收工时间不能超过当天收工点（20:00）—— 否则会显示成"26:16"这种不存在的钟点
+	GI->MineStopClockMinutes = FMath::Min(
+		GI->ClockMinutes + UstudyGameInstance::MineDurationSeconds * GameMinutesPerSecond,
+		UstudyGameInstance::DayEndMinutes);
 
 	const int32 StartH = FMath::FloorToInt(GI->ClockMinutes / 60.f);
 	const int32 StartM = FMath::FloorToInt(GI->ClockMinutes) % 60;

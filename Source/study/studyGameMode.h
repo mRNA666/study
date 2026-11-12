@@ -43,6 +43,17 @@ protected:
 	/** 营地：在出生点附近摆上两个商人（卖开采权 / 收黄金） */
 	void SpawnCampMerchants();
 
+	/** 昼夜：按游戏时钟调太阳和天光（只在营地） */
+	void UpdateDayNightLighting();
+
+	/** 缓存的太阳 / 天光，避免每帧遍历关卡找 */
+	TWeakObjectPtr<class ADirectionalLight> SunLight;
+	TWeakObjectPtr<class ASkyLight> SkyLightActor;
+
 	/** 第二天 20:00：结算（没卖掉的黄金按黑市价折算进现金） */
 	void EndMatch();
+
+public:
+	/** 立刻结算（床在最后一天睡觉时调用） */
+	void ForceSettle();
 };

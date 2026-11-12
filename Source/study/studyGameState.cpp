@@ -57,6 +57,19 @@ void AstudyGameState::ShowGoldNotice(float Grams, float Seconds)
 	}
 
 	NoticeGoldGrams = Grams;
+	NoticeText.Reset();
+	NoticeTimeLeft = Seconds;
+}
+
+void AstudyGameState::ShowTextNotice(const FString& Text, float Seconds)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	NoticeText = Text;
+	NoticeGoldGrams = 0.f;
 	NoticeTimeLeft = Seconds;
 }
 
@@ -177,7 +190,9 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AstudyGameState, DayIndex);
 	DOREPLIFETIME(AstudyGameState, ClockMinutes);
 	DOREPLIFETIME(AstudyGameState, FinalCash);
+	DOREPLIFETIME(AstudyGameState, FinalUnsoldCash);
 	DOREPLIFETIME(AstudyGameState, MineStopClockMinutes);
 	DOREPLIFETIME(AstudyGameState, NoticeGoldGrams);
+	DOREPLIFETIME(AstudyGameState, NoticeText);
 	DOREPLIFETIME(AstudyGameState, NoticeTimeLeft);
 }

@@ -53,6 +53,13 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	int32 FinalCash = 0;
 
+	/** 结算时，未卖掉的黄金折算出了多少币（明细用） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	int32 FinalUnsoldCash = 0;
+
+	int32 GetFinalUnsoldCash() const { return FinalUnsoldCash; }
+	void SetFinalUnsoldCash(int32 InCash) { FinalUnsoldCash = InCash; }
+
 	/** 本次开采按游戏时钟几点收工（0 = 不在矿里，HUD 不显示） */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	float MineStopClockMinutes = 0.f;
@@ -84,15 +91,23 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	float NoticeGoldGrams = 0.f;
 
+	/** 屏幕上要弹的一句话（优先于上面那个数字提示） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	FString NoticeText;
+
 	/** 提示还剩几秒 */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
 	float NoticeTimeLeft = 0.f;
 
 	float GetNoticeGoldGrams() const { return NoticeGoldGrams; }
+	const FString& GetNoticeText() const { return NoticeText; }
 	float GetNoticeTimeLeft() const { return NoticeTimeLeft; }
 
 	/** 服务器调用：弹一条"本趟带回 xx g"的提示 */
 	void ShowGoldNotice(float Grams, float Seconds);
+
+	/** 服务器调用：弹一条纯文字提示 */
+	void ShowTextNotice(const FString& Text, float Seconds);
 
 	/** 服务器每帧调用：把提示的剩余时间往下扣 */
 	void TickNotice(float DeltaSeconds);

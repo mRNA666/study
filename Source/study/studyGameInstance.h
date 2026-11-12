@@ -60,6 +60,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	float StashedGoldGrams = 0.f;
 
+	/** 正规买家今天还能收多少克（每天刷新） */
+	UPROPERTY(BlueprintReadOnly, Category = "Run")
+	float BuyerQuotaGrams = 3000.f;
+
+	/** 回到营地时要在屏幕上弹的一句话（空 = 不弹） */
+	UPROPERTY(BlueprintReadOnly, Category = "Run")
+	FString CampNoticeText;
+
 	/** 一局是否已经结束（第二天 18:00 结算之后置 true，防止重复弹） */
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	bool bRunFinished = false;
@@ -91,6 +99,12 @@ public:
 
 	/** 开局启动资金（币）。够买一次开采权，之后要靠卖金赚 */
 	static constexpr int32 StartingCash = 4000;
+
+	/** 正规买家每场能收多少克足金（PRD §2.9） */
+	static constexpr float BuyerQuotaPerDay = 3000.f;
+
+	/** 20:00 还在矿洞里，向导来接你的路费 */
+	static constexpr int32 LatePickupFee = 2000;
 
 	// ---------------- 操作 ----------------
 

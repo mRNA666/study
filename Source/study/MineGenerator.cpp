@@ -487,7 +487,7 @@ void AMineGenerator::BuildStashArea()
 	{
 		// 平台 Y 范围是 Local.Y ± PlatWidth/2；人形模型进深约 30cm，所以放在 Y-80 处，
 		// 后背正好贴上 -Y 那面墙。
-		const FTransform GuideXf(FRotator(0.f, 180.f, 0.f),
+		const FTransform GuideXf(FRotator(0.f, 0.f, 0.f),
 			GetActorLocation() + FVector(Local.X + 150.f, Local.Y - 80.f, PlatformTopZ));
 
 		AMerchant* Guide = World->SpawnActorDeferred<AMerchant>(
