@@ -20,8 +20,7 @@ class STUDY_API AUnloadZone : public AActor
 {
 	GENERATED_BODY()
 
-public:
-	AUnloadZone();
+public:	AUnloadZone();
 
 	/** 触发体积（默认 300×300×200 cm，可调） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Unload")
@@ -30,6 +29,13 @@ public:
 	/** 可选：地面标记用的网格（比如一块平台/旗子）。留空则看不见，只靠触发器 */
 	UPROPERTY(EditAnywhere, Category = "Unload")
 	TObjectPtr<UStaticMeshComponent> Marker;
+
+	/**
+	 * true  = 矿洞里的"暂存点"：只存进 GameInstance，等回到营地才一次性结算。
+	 * false = 营地里的卸货区：直接计入 GameState 的金重。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Unload")
+	bool bStashOnly = false;
 
 protected:
 	virtual void BeginPlay() override;

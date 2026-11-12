@@ -49,6 +49,27 @@ void AstudyGameState::SetClock(float InMinutes, int32 InDay)
 	DayIndex = InDay;
 }
 
+void AstudyGameState::ShowGoldNotice(float Grams, float Seconds)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	NoticeGoldGrams = Grams;
+	NoticeTimeLeft = Seconds;
+}
+
+void AstudyGameState::TickNotice(float DeltaSeconds)
+{
+	if (!HasAuthority() || NoticeTimeLeft <= 0.f)
+	{
+		return;
+	}
+
+	NoticeTimeLeft = FMath::Max(NoticeTimeLeft - DeltaSeconds, 0.f);
+}
+
 void AstudyGameState::SetTimeRemaining(float NewRemaining)
 {
 	if (!HasAuthority())
@@ -156,4 +177,6 @@ void AstudyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AstudyGameState, DayIndex);
 	DOREPLIFETIME(AstudyGameState, ClockMinutes);
 	DOREPLIFETIME(AstudyGameState, FinalCash);
+	DOREPLIFETIME(AstudyGameState, NoticeGoldGrams);
+	DOREPLIFETIME(AstudyGameState, NoticeTimeLeft);
 }

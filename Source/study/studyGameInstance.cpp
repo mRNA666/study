@@ -10,6 +10,7 @@ void UstudyGameInstance::ResetRun()
 	RightsBoughtToday = 0;
 	Cash = 0;
 	GoldGrams = 0.f;
+	StashedGoldGrams = 0.f;
 	bRunFinished = false;
 
 	UE_LOG(LogTemp, Log, TEXT("[Run] 新的一局开始（%d 天）"), TotalDays);

@@ -60,6 +60,29 @@ void ABagHUD::DrawHUD()
 
 			DrawText(ClockText, FLinearColor(1.f, 0.95f, 0.82f, 1.f),
 				BoxX + BoxPadX, BoxY + BoxPadY, nullptr, ClockScale, /*bScalePosition*/ false);
+
+			// 回营地时的一次性提示：这一趟从矿洞带回来多少黄金
+			if (GS->GetNoticeTimeLeft() > 0.f && GS->GetNoticeGoldGrams() > 0.f)
+			{
+				const FString Notice = FString::Printf(TEXT("本趟带回   %.1f g   黄金"),
+					GS->GetNoticeGoldGrams());
+
+				const float NoticeScale = FontScale * 1.2f;
+				float NW = 0.f, NH = 0.f;
+				GetTextSize(Notice, NW, NH, nullptr, NoticeScale);
+
+				// 最后 1.5 秒淡出
+				const float Alpha = FMath::Clamp(GS->GetNoticeTimeLeft() / 1.5f, 0.f, 1.f);
+
+				const float NX = Canvas->SizeX * 0.5f - NW * 0.5f;
+				const float NY = Canvas->SizeY * 0.32f;
+
+				DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f * Alpha),
+					NX - 22.f, NY - 8.f, NW + 44.f, NH + 16.f);
+
+				DrawText(Notice, FLinearColor(1.f, 0.85f, 0.3f, Alpha),
+					NX, NY, nullptr, NoticeScale, /*bScalePosition*/ false);
+			}
 		}
 	}
 
@@ -114,14 +137,13 @@ void ABagHUD::DrawHUD()
 		LoadColor = FLinearColor(1.f, 0.80f, 0.25f, 1.f);		// 快满：黄
 	}
 
-	float GoldGrams = 0.f;
+	// 金重 = 现在背包里背着的黄金（交进卸货区/暂存点后就清零）
+	float GoldGrams = Character->GetCarriedGoldGrams();
 	int32 Cash = 0;
 	if (const UWorld* World = GetWorld())
 	{
 		if (const AstudyGameState* GS = World->GetGameState<AstudyGameState>())
 		{
-			// 金重 = 还没卖掉的黄金；现金 = 已经卖出去的。背包里背了多少不显示
-			GoldGrams = GS->GetGoldGrams(0);
 			Cash = GS->GetCash(0);
 		}
 	}

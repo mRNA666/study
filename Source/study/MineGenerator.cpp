@@ -4,10 +4,13 @@
 #include "MineGenerator.h"
 #include "DigVolume.h"
 #include "DropItem.h"
+#include "LadderActor.h"
+#include "UnloadZone.h"
 #include "Materials/MaterialInterface.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/BoxComponent.h"
 
 AMineGenerator::AMineGenerator()
 {
@@ -64,6 +67,7 @@ void AMineGenerator::BeginPlay()
 	}
 
 	BuildBlockList();
+	BuildStashArea();
 	BuildOuterShell();
 
 	UE_LOG(LogTemp, Log, TEXT("[Mine] 准备生成 %d 块（房间 %.0fcm / 块 %.0fcm / 步长 %.0fcm）"),
@@ -153,17 +157,26 @@ void AMineGenerator::BuildBlockList()
 		}
 	}
 
-	// ---- 顶面：铺满整个网格 ----
-	// 之前只铺"内部 + 最内一圈"，结果最外圈墙头上是空的，从洞里往上能看见一圈缺口。
+	// ---- 顶面：铺满整个网格（中间留一格给梯子） ----
 	if (bAddCeiling)
 	{
 		const float Z = B * 0.5f + LayerCount * B;
+		const int32 HoleIx = bHasStashArea ? NumPerSide / 2 : -1;
+		const int32 HoleIy = HoleIx;
+
 		for (int32 ix = 0; ix < NumPerSide; ++ix)
 		{
 			for (int32 iy = 0; iy < NumPerSide; ++iy)
 			{
 				const float X = -Half + B * 0.5f + ix * B;
 				const float Y = -Half + B * 0.5f + iy * B;
+
+				// 头顶这一格留给梯子：不铺石头，玩家从这儿爬上去
+				if (ix == HoleIx && iy == HoleIy)
+				{
+					HoleCenter = Base + FVector(X, Y, 0.f);
+					continue;
+				}
 
 				FBlockSpec Spec;
 				Spec.Location = Base + FVector(X, Y, Z);
@@ -257,7 +270,9 @@ void AMineGenerator::BuildOuterShell()
 
 	const float CeilTop = B * 0.5f + FMath::Max(WallLayers, 1) * B + B * 0.5f;
 	const float BottomZ = -B - SlabThick;
-	const float TopZ = CeilTop + SlabThick;
+
+	// 头顶有暂存平台时，外壳的顶板要让到平台上方
+	const float TopZ = CeilTop + GetStashTopExtra() + SlabThick;
 	const float Height = TopZ - BottomZ;
 	const float CenterZ = (TopZ + BottomZ) * 0.5f;
 	const float Side = 2.f * CenterOffset;
@@ -306,6 +321,169 @@ void AMineGenerator::BuildOuterShell()
 
 	UE_LOG(LogTemp, Log, TEXT("[Mine] 外围空气墙已生成（%d 块，材质=%s）"),
 		Slabs.Num(), *GetNameSafe(RockMaterial));
+}
+
+float AMineGenerator::GetStashTopExtra() const
+{
+	// 平台板厚 50 + 平台上方净空
+	return bHasStashArea ? (50.f + FMath::Max(StashAlcoveHeightCm, 100.f)) : 0.f;
+}
+
+void AMineGenerator::SpawnRockSlab(const FVector& WorldOffset, const FVector& SizeCm)
+{
+	UWorld* World = GetWorld();
+	if (!World || !RockMaterial)
+	{
+		return;
+	}
+
+	UStaticMesh* CubeMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (!CubeMesh)
+	{
+		return;
+	}
+
+	// 立方体原始边长 100cm → 缩放 = 目标尺寸 / 100
+	const FTransform Xf(FRotator::ZeroRotator, GetActorLocation() + WorldOffset, SizeCm / 100.f);
+
+	AStaticMeshActor* Slab = World->SpawnActorDeferred<AStaticMeshActor>(
+		AStaticMeshActor::StaticClass(), Xf, nullptr, nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Slab)
+	{
+		return;
+	}
+
+	if (UStaticMeshComponent* Comp = Slab->GetStaticMeshComponent())
+	{
+		// 运行时生成的组件必须是 Movable
+		Comp->SetMobility(EComponentMobility::Movable);
+		Comp->SetStaticMesh(CubeMesh);
+		Comp->SetMaterial(0, RockMaterial);
+	}
+
+	Slab->FinishSpawning(Xf);
+}
+
+void AMineGenerator::BuildStashArea()
+{
+	if (!bHasStashArea || !RockMaterial)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float B = FMath::Max(BlockSizeCm, 10.f);
+	const float CeilTopZ = (static_cast<float>(FMath::Max(WallLayers, 1)) + 1.f) * B;
+	const float PlatformThick = 50.f;
+	const float PlatformTopZ = CeilTopZ + PlatformThick;
+	const float HalfSize = FMath::Max(StashPlatformSizeCm, B * 2.f) * 0.5f;
+	const float WallThick = 40.f;
+	const float AlcoveH = FMath::Max(StashAlcoveHeightCm, 100.f);
+
+	// HoleCenter 是世界坐标；换算成相对本 Actor 的偏移
+	const FVector Local = HoleCenter - GetActorLocation();
+
+	(void)HalfSize;
+
+	// ---- 梯子脚下 1×1 的岩石小平台 ----
+	// 盖住梯子模型底部那圈灰底座，也让梯子看起来是"插在地上"的
+	SpawnRockSlab(FVector(Local.X, Local.Y, -10.f), FVector(100.f, 100.f, 20.f));
+
+	// ---- 平台：2m 宽 × 4m 长，从梯子旁边 20cm 处开始铺 ----
+	// 爬梯子时人被锁在梯子 -X 侧 55cm（胶囊半径 34 → +X 边界在 -21），
+	// 平台近边放到 +20：既不会压头，也不会和梯子撞（梯子 box 到 +12 为止）。
+	const float PlatWidth = 200.f;		// Y 方向宽度
+	const float PlatDepth = 400.f;		// X 方向长度（远离梯子的方向）
+	const float PlatNearX = 16.f;		// 平台近边：梯子碰撞盒到 +12，留 4cm 就不会撞
+
+	const float PlatCenterX = Local.X + PlatNearX + PlatDepth * 0.5f;
+	const float PlatCenterY = Local.Y;
+
+	SpawnRockSlab(FVector(PlatCenterX, PlatCenterY, CeilTopZ + PlatformThick * 0.5f),
+		FVector(PlatDepth, PlatWidth, PlatformThick));
+
+	// ---- 把整个"梯子通道 + 平台"封成一个房间 ----
+	// 墙从天花板顶面（600）一直砌到顶盖（950），所以从梯子往上看到的是石头，不是虚空。
+	const float WallBottom = CeilTopZ;					// 600
+	const float WallTop = PlatformTopZ + AlcoveH;		// 950
+	const float WallH = WallTop - WallBottom;
+	const float WallZ = (WallTop + WallBottom) * 0.5f;
+
+	const float RoomMinX = Local.X - 110.f;											// 梯子后方留 1.1 米
+	const float RoomMaxX = PlatCenterX + PlatDepth * 0.5f;							// 平台末端
+	const float RoomMinY = Local.Y - PlatWidth * 0.5f;								// 和平台同宽，墙贴死在平台边上
+	const float RoomMaxY = Local.Y + PlatWidth * 0.5f;
+	const float RoomLenX = RoomMaxX - RoomMinX;
+	const float RoomLenY = RoomMaxY - RoomMinY;
+	const float RoomCenterX = (RoomMinX + RoomMaxX) * 0.5f;
+	const float RoomCenterY = (RoomMinY + RoomMaxY) * 0.5f;
+
+	// 三面墙 + 一面远墙（近边 X- 是梯子通道，不能再堵）
+	SpawnRockSlab(FVector(RoomMinX - WallThick * 0.5f, RoomCenterY, WallZ),
+		FVector(WallThick, RoomLenY + WallThick * 2.f, WallH));
+	SpawnRockSlab(FVector(RoomMaxX + WallThick * 0.5f, RoomCenterY, WallZ),
+		FVector(WallThick, RoomLenY + WallThick * 2.f, WallH));
+	SpawnRockSlab(FVector(RoomCenterX, RoomMinY - WallThick * 0.5f, WallZ),
+		FVector(RoomLenX + WallThick * 2.f, WallThick, WallH));
+	SpawnRockSlab(FVector(RoomCenterX, RoomMaxY + WallThick * 0.5f, WallZ),
+		FVector(RoomLenX + WallThick * 2.f, WallThick, WallH));
+
+	// ---- 顶盖 ----
+	SpawnRockSlab(FVector(RoomCenterX, RoomCenterY, WallTop + WallThick * 0.5f),
+		FVector(RoomLenX + WallThick * 2.f, RoomLenY + WallThick * 2.f, WallThick));
+
+	// ---- 梯子：上端正好到平台顶面（不再冒出去）----
+	{
+		const FTransform LadderXf(FRotator::ZeroRotator,
+			GetActorLocation() + FVector(Local.X, Local.Y, -15.f));
+
+		ALadderActor* Ladder = World->SpawnActorDeferred<ALadderActor>(
+			ALadderActor::StaticClass(), LadderXf, nullptr, nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (Ladder)
+		{
+			Ladder->Height = PlatformTopZ + 15.f;
+
+			if (UStaticMesh* LadderMesh = LoadObject<UStaticMesh>(nullptr,
+				TEXT("/Game/Ladder/SM_Ladder.SM_Ladder")))
+			{
+				Ladder->Frame->SetStaticMesh(LadderMesh);
+			}
+
+			Ladder->FinishSpawning(LadderXf);
+		}
+	}
+
+	// ---- 暂存点：平台最里面那个 2×2 的区域 ----
+	{
+		const FTransform StashXf(FRotator::ZeroRotator,
+			GetActorLocation() + FVector(PlatCenterX + PlatDepth * 0.5f - 100.f, PlatCenterY, PlatformTopZ + 10.f));
+
+		AUnloadZone* Stash = World->SpawnActorDeferred<AUnloadZone>(
+			AUnloadZone::StaticClass(), StashXf, nullptr, nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (Stash)
+		{
+			Stash->bStashOnly = true;
+
+			// 缩到贴合 2×2 的格子，不要伸到平台外面
+			if (Stash->Trigger)
+			{
+				Stash->Trigger->SetBoxExtent(FVector(95.f, 95.f, 110.f));
+			}
+
+			Stash->FinishSpawning(StashXf);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Mine] 头顶暂存平台已生成（平台 %.0fcm，净空 %.0fcm，洞在 %.0f,%.0f）"),
+		StashPlatformSizeCm, AlcoveH, Local.X, Local.Y);
 }
 
 float AMineGenerator::GetBuildProgress() const

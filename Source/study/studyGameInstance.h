@@ -45,6 +45,13 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	float GoldGrams = 0.f;
 
+	/**
+	 * 矿洞里"暂存点"收下的金重（g）。
+	 * 玩家回到营地时才一次性加进 GoldGrams 并弹提示。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Run")
+	float StashedGoldGrams = 0.f;
+
 	/** 一局是否已经结束（第二天 18:00 结算之后置 true，防止重复弹） */
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	bool bRunFinished = false;

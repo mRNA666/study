@@ -85,6 +85,19 @@ void AstudyGameMode::BeginPlay()
 	GS->SetFinalCash(GI->Cash);
 	GS->SetPhase(EGamePhase::InProgress);
 
+	// 回到营地：把矿洞暂存点收下的金重一次性结算，并弹一条提示
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+	if (MapName.Contains(TEXT("Camp")) && GI->StashedGoldGrams > 0.f)
+	{
+		const float BroughtBack = GI->StashedGoldGrams;
+		GI->GoldGrams += BroughtBack;
+		GI->StashedGoldGrams = 0.f;
+
+		GS->ShowGoldNotice(BroughtBack, 6.f);
+		UE_LOG(LogTemp, Log, TEXT("[Stash] 回到营地结算：+%.1f g，金重累计 %.1f g"),
+			BroughtBack, GI->GoldGrams);
+	}
+
 	EnsureWorldBasics();
 
 	UE_LOG(LogTemp, Log, TEXT("[Match] 开局：第 %d 天 %s"), GI->DayIndex, *FormatClock(GI->ClockMinutes));
@@ -126,6 +139,13 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 
 	AstudyGameState* GS = GetStudyGameState();
 	UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this));
+
+	// 提示的倒计时：不管什么阶段都要走（结算面板上也可能要显示）
+	if (GS)
+	{
+		GS->TickNotice(DeltaSeconds);
+	}
+
 	if (!GS || !GI || GS->GetPhase() != EGamePhase::InProgress)
 	{
 		return;

@@ -68,6 +68,20 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mine")
 	bool bAddCeiling = true;
 
+	// ---------------- 头顶暂存平台 ----------------
+
+	/** 天花板开一个洞，加梯子 + 平台 + 岩壁 + 矿石暂存点 */
+	UPROPERTY(EditAnywhere, Category = "Mine")
+	bool bHasStashArea = true;
+
+	/** 暂存平台的边长（cm） */
+	UPROPERTY(EditAnywhere, Category = "Mine")
+	float StashPlatformSizeCm = 700.f;
+
+	/** 暂存平台上方的净空高度（cm） */
+	UPROPERTY(EditAnywhere, Category = "Mine")
+	float StashAlcoveHeightCm = 300.f;
+
 	// ---------------- 性能 ----------------
 
 	/** 每个块的采样步长（cm）。越大越省、洞越方 */
@@ -128,4 +142,16 @@ private:
 
 	/** 生成一块 */
 	void SpawnBlock(const FBlockSpec& Spec);
+
+	/** 头顶暂存平台：平台板 + 四面岩壁 + 梯子 + 暂存点 */
+	void BuildStashArea();
+
+	/** 天花板开洞那一格的中心（世界坐标） */
+	FVector HoleCenter = FVector::ZeroVector;
+
+	/** 暂存平台占用的额外高度（外壳顶板要让开） */
+	float GetStashTopExtra() const;
+
+	/** 造一块贴着岩石材质的薄板（平台、岩壁、外壳都用它） */
+	void SpawnRockSlab(const FVector& WorldOffset, const FVector& SizeCm);
 };

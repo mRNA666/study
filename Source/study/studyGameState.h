@@ -71,6 +71,25 @@ public:
 	/** 黑市收购价系数（好感度"熟人"档 65%，见 PRD §2.9） */
 	static constexpr float BlackMarketRate = 0.65f;
 
+	// ---------------- 回营地提示 ----------------
+
+	/** 这一趟从矿洞带回来多少克黄金（0 = 不显示） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	float NoticeGoldGrams = 0.f;
+
+	/** 提示还剩几秒 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	float NoticeTimeLeft = 0.f;
+
+	float GetNoticeGoldGrams() const { return NoticeGoldGrams; }
+	float GetNoticeTimeLeft() const { return NoticeTimeLeft; }
+
+	/** 服务器调用：弹一条"本趟带回 xx g"的提示 */
+	void ShowGoldNotice(float Grams, float Seconds);
+
+	/** 服务器每帧调用：把提示的剩余时间往下扣 */
+	void TickNotice(float DeltaSeconds);
+
 	/**
 	 * 每个玩家已交回的黄金克数。索引 = 玩家序号。
 	 * 现在单机只有索引 0；联机时改成按 PlayerState 映射。

@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "studyCharacter.h"
 #include "studyGameState.h"
+#include "studyGameInstance.h"
 
 AUnloadZone::AUnloadZone()
 {
@@ -64,6 +65,19 @@ void AUnloadZone::OnTriggerBeginOverlap(UPrimitiveComponent* /*OverlappedComp*/,
 
 	// 记到 GameState 上。
 	// 现在单机，玩家序号固定 0；将来联机时改成按 PlayerId 映射。
+	if (bStashOnly)
+	{
+		// 矿洞里的暂存点：先存进 GameInstance，等玩家回到营地才一次性结算。
+		// 切关卡会销毁 GameState，所以必须存到 GameInstance 才活得下来。
+		if (UstudyGameInstance* GI = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this)))
+		{
+			GI->StashedGoldGrams += Delivered;
+			UE_LOG(LogTemp, Log, TEXT("[Stash] 暂存 +%.1f g，累计 %.1f g（回营地后结算）"),
+				Delivered, GI->StashedGoldGrams);
+		}
+		return;
+	}
+
 	if (AstudyGameState* GS = GetWorld() ? GetWorld()->GetGameState<AstudyGameState>() : nullptr)
 	{
 		GS->AddGoldGrams(0, Delivered);
