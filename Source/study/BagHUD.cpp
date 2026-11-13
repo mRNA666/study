@@ -53,9 +53,11 @@ void ABagHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
-	// UMG 接管之后，Canvas 完全不画
+	// UMG 接管之后，Canvas 不再画 HUD 文字 —— 但卸货区的"地面红框 + 卸货区"仍然用 Canvas 画：
+	// 那需要把世界坐标投影到屏幕上、再逐点做射线遮挡测试，UMG 做不了这件事。
 	if (HUDWidget)
 	{
+		DrawUnloadZones();
 		return;
 	}
 
@@ -565,18 +567,36 @@ void ABagHUD::DrawUnloadZones()
 			continue;
 		}
 
-		// 遮挡测试：从相机往目标点打一条射线，中间没东西挡住才算可见
-		TraceParams.AddIgnoredActor(Zone);
+		// 遮挡测试：从相机往目标点打一条射线，中间没东西挡住才算可见。
+		// 卸货区在矿洞头顶的平台上，站在洞里应该【看不见】—— 这才对。
+		FCollisionQueryParams ZoneParams(FName(TEXT("UnloadZoneMarker")), /*bTraceComplex*/ false);
+		if (Pawn)
+		{
+			ZoneParams.AddIgnoredActor(Pawn);
+		}
+		ZoneParams.AddIgnoredActor(Zone);
+
 		auto IsVisible = [&](const FVector& Pt) -> bool
 		{
 			FHitResult Hit;
 			const bool bBlocked = World->LineTraceSingleByChannel(
-				Hit, ViewLoc, Pt, ECC_Visibility, TraceParams);
+				Hit, ViewLoc, Pt, ECC_Visibility, ZoneParams);
 			return !bBlocked;
 		};
 
-		// ---- 地板上的矩形：取盒子底面，抬高 2cm 免得和地板重合 ----
-		const float FloorZ = Box.Min.Z + 2.f;
+		// 找"这个区域下面的真实地面"。
+		// 不能用 Box.Min.Z：触发盒本身比地面高出/低出很多，画出来会陷进平台里。
+		float FloorZ = Box.Min.Z + 2.f;
+		{
+			const FVector Center = Box.GetCenter();
+			FHitResult FloorHit;
+			if (World->LineTraceSingleByChannel(FloorHit, Center, Center - FVector(0.f, 0.f, 800.f), ECC_Visibility, ZoneParams))
+			{
+				FloorZ = FloorHit.ImpactPoint.Z + 2.f;		// 抬高 2cm，别和地板重合
+			}
+		}
+
+		// ---- 地板上的矩形：用找到的真实地面高度 ----
 		const FVector Quad[4] =
 		{
 			{Box.Min.X, Box.Min.Y, FloorZ},
@@ -610,17 +630,46 @@ void ABagHUD::DrawUnloadZones()
 				&& UGameplayStatics::ProjectWorldToScreen(PC, Ring[i], ScreenPts[i], /*bPlayerViewportRelative*/ true);
 		}
 
+		// 粗线画框：8 像素，远处也看得清
 		for (int32 i = 0; i < Num; ++i)
 		{
 			const int32 J = (i + 1) % Num;
 			if (PtVisible[i] && PtVisible[J])
 			{
-				DrawLine(ScreenPts[i].X, ScreenPts[i].Y, ScreenPts[J].X, ScreenPts[J].Y, ZoneEdgeColor, 3.f);
+				DrawLine(ScreenPts[i].X, ScreenPts[i].Y, ScreenPts[J].X, ScreenPts[J].Y, ZoneEdgeColor, 8.f);
 			}
 		}
 
-		// ---- 标签：盒子顶部中心上方 60cm，同样要过遮挡测试 ----
-		const FVector LabelWorld = Box.GetCenter() + FVector(0.f, 0.f, Box.GetExtent().Z + 60.f);
+		// 四个角再画一个"L 形角标"，让框看起来更醒目
+		for (int32 i = 0; i < 4; ++i)
+		{
+			FVector2D C;
+			if (!IsVisible(Quad[i]) || !UGameplayStatics::ProjectWorldToScreen(PC, Quad[i], C, true))
+			{
+				continue;
+			}
+
+			const float Tick = 26.f;
+			DrawLine(C.X - Tick, C.Y, C.X + Tick, C.Y, ZoneEdgeColor, 6.f);
+			DrawLine(C.X, C.Y - Tick, C.X, C.Y + Tick, ZoneEdgeColor, 6.f);
+		}
+
+		// 中间立一根竖标：从地面往上 2 米，远处一眼就能定位
+		{
+			const FVector Center = Box.GetCenter();
+			const FVector BaseWorld(Center.X, Center.Y, FloorZ);
+
+			FVector2D BasePt, TopPt;
+			if (IsVisible(BaseWorld + FVector(0.f, 0.f, 40.f))
+				&& UGameplayStatics::ProjectWorldToScreen(PC, BaseWorld, BasePt, true)
+				&& UGameplayStatics::ProjectWorldToScreen(PC, BaseWorld + FVector(0.f, 0.f, 200.f), TopPt, true))
+			{
+				DrawLine(BasePt.X, BasePt.Y, TopPt.X, TopPt.Y, ZoneEdgeColor, 5.f);
+			}
+		}
+
+		// ---- 标签：盒子顶部中心上方 80cm（同样要过遮挡测试） ----
+		const FVector LabelWorld = Box.GetCenter() + FVector(0.f, 0.f, Box.GetExtent().Z + 80.f);
 		if (!IsVisible(LabelWorld))
 		{
 			continue;
@@ -635,14 +684,24 @@ void ABagHUD::DrawUnloadZones()
 		// 近大远小
 		const float Dist = FVector::Dist(LabelWorld, ViewLoc);
 		const float DistAlpha = FMath::Clamp((Dist - 300.f) / 2700.f, 0.f, 1.f);
-		const float LabelScale = FMath::Lerp(1.8f, 0.7f, DistAlpha) * FontScale * 0.5f;
+		const float LabelScale = FMath::Lerp(2.6f, 1.1f, DistAlpha) * FontScale * 0.5f;
 
 		const FString Label = TEXT("卸货区");
 		float TextW = 0.f, TextH = 0.f;
 		GetTextSize(Label, TextW, TextH, nullptr, LabelScale);
 
+		const float BX = LabelScreen.X - TextW * 0.5f;
+		const float BY = LabelScreen.Y - TextH * 0.5f;
+		const float PadX = 14.f, PadY = 8.f;
+
+		// 黑底 + 红边，压在任何背景上都读得清
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.72f), BX - PadX, BY - PadY, TextW + PadX * 2.f, TextH + PadY * 2.f);
+		DrawLine(BX - PadX, BY - PadY, BX + TextW + PadX, BY - PadY, ZoneEdgeColor, 2.f);
+		DrawLine(BX - PadX, BY + TextH + PadY, BX + TextW + PadX, BY + TextH + PadY, ZoneEdgeColor, 2.f);
+		DrawLine(BX - PadX, BY - PadY, BX - PadX, BY + TextH + PadY, ZoneEdgeColor, 2.f);
+		DrawLine(BX + TextW + PadX, BY - PadY, BX + TextW + PadX, BY + TextH + PadY, ZoneEdgeColor, 2.f);
+
 		DrawText(Label, ZoneTextColor,
-			LabelScreen.X - TextW * 0.5f, LabelScreen.Y - TextH * 0.5f,
-			nullptr, LabelScale, /*bScalePosition*/ false);
+			BX, BY, nullptr, LabelScale, /*bScalePosition*/ false);
 	}
 }

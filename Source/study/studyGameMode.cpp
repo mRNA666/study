@@ -18,6 +18,8 @@
 #include "Merchant.h"
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
+#include "studyCharacter.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -209,6 +211,30 @@ void AstudyGameMode::SpawnCampMerchants()
 		Origin.X, Origin.Y, Origin.Z);
 }
 
+void AstudyGameMode::BeginReturnToCamp(const FString& TransitionText)
+{
+	if (bReturnToCampPending)
+	{
+		return;
+	}
+	bReturnToCampPending = true;
+
+	// 黑屏提示（1.5 秒），这期间玩家输入也被锁住
+	if (AstudyCharacter* Char = Cast<AstudyCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+	{
+		Char->ShowTransition(TransitionText, 1.5f);
+	}
+
+	FTimerHandle TravelHandle;
+	GetWorldTimerManager().SetTimer(TravelHandle,
+		FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		}),
+		1.5f, false);
+}
+
 void AstudyGameMode::UpdateDayNightLighting()
 {
 	UWorld* World = GetWorld();
@@ -373,7 +399,7 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 		UE_LOG(LogTemp, Log, TEXT("[Mine] 20:00 还在矿洞，扣路费 %d 币，送回营地"),
 			UstudyGameInstance::LatePickupFee);
 
-		UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+		BeginReturnToCamp(TEXT("太晚了，向导已经回去了......"));
 		return;
 	}
 
@@ -390,10 +416,7 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 
 			UE_LOG(LogTemp, Log, TEXT("[Mine] 开采时间到，强制送回营地"));
 
-			// 走之前把背包里没交的黄金一起带走（不然玩家会"白挖"）
-			UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
-
-			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+			BeginReturnToCamp(TEXT("返回营地......"));
 		}
 	}
 	else if (GS->GetMineStopClock() != 0.f)

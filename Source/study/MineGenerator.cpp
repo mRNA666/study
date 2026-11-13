@@ -68,6 +68,11 @@ void AMineGenerator::BeginPlay()
 	}
 
 	BuildBlockList();
+
+	if (PendingBlocks.Num() <= 0)
+	{
+		bBuildFinished = true;
+	}
 	BuildStashArea();
 	BuildOuterShell();
 
@@ -205,6 +210,7 @@ void AMineGenerator::Tick(float DeltaSeconds)
 
 	if (NextBlockIndex >= PendingBlocks.Num())
 	{
+		bBuildFinished = true;
 		UE_LOG(LogTemp, Log, TEXT("[Mine] 生成完毕：%d 块"), PendingBlocks.Num());
 		SetActorTickEnabled(false);
 	}

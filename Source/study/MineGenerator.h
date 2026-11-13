@@ -113,6 +113,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Mine")
 	float GetBuildProgress() const;
 
+	/** 所有块都生成完了吗（HUD 的加载遮罩用它判断什么时候收起来） */
+	UFUNCTION(BlueprintPure, Category = "Mine")
+	bool IsBuildFinished() const { return bBuildFinished; }
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -128,6 +132,9 @@ private:
 	TArray<FBlockSpec> PendingBlocks;
 
 	int32 NextBlockIndex = 0;
+
+	/** 全部块生成完毕（含"本来就没块"的情况） */
+	bool bBuildFinished = false;
 
 	/** 把房间拆成一堆块 */
 	void BuildBlockList();

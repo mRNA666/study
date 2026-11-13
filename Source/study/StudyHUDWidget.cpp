@@ -6,6 +6,9 @@
 #include "studyGameState.h"
 #include "studyGameInstance.h"
 #include "Merchant.h"
+#include "MineGenerator.h"
+#include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -270,6 +273,43 @@ void UStudyHUDWidget::BuildLayout()
 		DialogBorder->SetContent(Box);
 	}
 	Place(Root, DialogBorder, FVector2D(0.5f, 0.62f), FVector2D(0.5f, 0.5f), FVector2D(0.f, 0.f));
+
+	// ---------------- 矿洞加载遮罩（全屏，必须最后加，才能盖住所有东西） ----------------
+	LoadingBorder = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	LoadingBorder->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 1.f));
+	LoadingBorder->SetHorizontalAlignment(HAlign_Center);
+	LoadingBorder->SetVerticalAlignment(VAlign_Center);
+	{
+		UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+
+		LoadingText = MakeText(WidgetTree, TEXT("正在开挖矿洞……"), 30,
+			FLinearColor(0.92f, 0.90f, 0.85f, 1.f), true);
+		Box->AddChildToVerticalBox(LoadingText);
+
+		USizeBox* BarBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		BarBox->SetWidthOverride(400.f);
+		BarBox->SetHeightOverride(14.f);
+
+		LoadingBar = WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass());
+		LoadingBar->SetPercent(0.f);
+		LoadingBar->SetFillColorAndOpacity(FLinearColor(0.95f, 0.72f, 0.25f, 1.f));
+		BarBox->AddChild(LoadingBar);
+
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(BarBox)))
+		{
+			S->SetPadding(FMargin(0.f, 18.f, 0.f, 0.f));
+			S->SetHorizontalAlignment(HAlign_Center);
+		}
+
+		LoadingBorder->SetContent(Box);
+	}
+	LoadingBorder->SetVisibility(ESlateVisibility::Collapsed);
+	if (UCanvasPanelSlot* LoadSlot = Cast<UCanvasPanelSlot>(Root->AddChildToCanvas(LoadingBorder)))
+	{
+		// 四边贴满屏幕
+		LoadSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+		LoadSlot->SetOffsets(FMargin(0.f));
+	}
 }
 
 // ---------------- 每帧刷新 ----------------
@@ -294,13 +334,16 @@ void UStudyHUDWidget::NativeConstruct()
 	// 切关卡不会自动清掉 —— 上次对话开着时传送到矿洞，就会把 GameAndUI + 锁视角带过去，
 	// 表现为"鼠标一直露着、必须按住左键才能转视角"。
 	SetDialogInputMode(false);
+	SetLoadingState(false);		// 万一是从"加载中被切走"的场景回来，先把输入还回去
 	bWasDialogOpen = false;
+	bWasLoading = false;
 }
 
 void UStudyHUDWidget::NativeDestruct()
 {
 	// Widget 被销毁（关卡切换 / 结束播放）时也要把输入还回去
 	SetDialogInputMode(false);
+	SetLoadingState(false);
 	Super::NativeDestruct();
 }
 
@@ -463,6 +506,65 @@ void UStudyHUDWidget::Refresh()
 		}
 	}
 
+	// ---- 加载遮罩 ----
+	// 两种来源：
+	//   ① 主角身上的黑屏过渡（睡觉 / 传送回营地，1.5 秒）
+	//   ② 矿洞生成器还没铺完石头
+	// 两种期间都把玩家输入锁掉。
+	{
+		bool bLoading = false;
+		bool bShowBar = false;
+
+		if (Character->IsTransitioning())
+		{
+			bLoading = true;
+			if (LoadingText)
+			{
+				LoadingText->SetText(FText::FromString(Character->GetTransitionText()));
+			}
+		}
+		else
+		{
+			if (!CachedMineGen.IsValid())
+			{
+				if (UWorld* World = GetWorld())
+				{
+					for (TActorIterator<AMineGenerator> It(World); It; ++It)
+					{
+						CachedMineGen = *It;
+						break;
+					}
+				}
+			}
+
+			if (CachedMineGen.IsValid() && !CachedMineGen->IsBuildFinished())
+			{
+				bLoading = true;
+				bShowBar = true;
+
+				if (LoadingText)
+				{
+					LoadingText->SetText(FText::FromString(TEXT("正在开挖矿洞……")));
+				}
+				if (LoadingBar)
+				{
+					LoadingBar->SetPercent(CachedMineGen->GetBuildProgress());
+				}
+			}
+		}
+
+		if (LoadingBar)
+		{
+			LoadingBar->SetVisibility(bShowBar ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
+
+		if (bLoading != bWasLoading)
+		{
+			SetLoadingState(bLoading);
+			bWasLoading = bLoading;
+		}
+	}
+
 	// ---- 对话框 ----
 	const bool bDialogOpen = Character->IsDialogOpen();
 
@@ -539,6 +641,40 @@ void UStudyHUDWidget::OnDialogClose()
 	if (AstudyCharacter* Character = GetStudyCharacter())
 	{
 		Character->CloseDialog();
+	}
+}
+
+void UStudyHUDWidget::SetLoadingState(bool bLoading)
+{
+	if (LoadingBorder)
+	{
+		LoadingBorder->SetVisibility(bLoading ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+
+	APlayerController* PC = GetOwningPlayer();
+	if (!PC)
+	{
+		return;
+	}
+
+	// 加载期间玩家既不能动、也不能挖/捡/交互
+	APawn* Pawn = PC->GetPawn();
+
+	if (bLoading)
+	{
+		PC->DisableInput(PC);
+		if (Pawn)
+		{
+			Pawn->DisableInput(PC);
+		}
+	}
+	else
+	{
+		PC->EnableInput(PC);
+		if (Pawn)
+		{
+			Pawn->EnableInput(PC);
+		}
 	}
 }
 

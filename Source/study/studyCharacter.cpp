@@ -100,9 +100,20 @@ void AstudyCharacter::BeginPlay()
 	}
 }
 
+void AstudyCharacter::ShowTransition(const FString& Text, float Seconds)
+{
+	TransitionText = Text;
+	TransitionTimeLeft = FMath::Max(Seconds, 0.f);
+}
+
 void AstudyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (TransitionTimeLeft > 0.f)
+	{
+		TransitionTimeLeft = FMath::Max(TransitionTimeLeft - DeltaSeconds, 0.f);
+	}
 
 	// 每帧更新一次"准星对准了哪块石头"。只做一次直线检测，很便宜。
 	UpdateFocus();
@@ -462,7 +473,9 @@ AMerchant* AstudyCharacter::FindNearbyMerchant() const
 
 	for (TActorIterator<AMerchant> It(World); It; ++It)
 	{
-		if (It->IsInRange(this))
+		// 隐藏的 NPC（比如第 1 天还没来的正规买家）不算"可交互"：
+		// 否则 HUD 会提示"按 E 说话"，而且 E 会被一个看不见的人吃掉。
+		if (!It->IsHidden() && It->IsInRange(this))
 		{
 			return *It;
 		}

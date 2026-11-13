@@ -9,6 +9,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -20,7 +21,9 @@ namespace
 
 AMerchant::AMerchant()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 默认不 tick；只有配了 MinDay 的（比如正规买家）才需要每帧检查日子
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	Body = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Body"));
 	SetRootComponent(Body);
@@ -55,15 +58,42 @@ void AMerchant::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 手动摆的正规买家：没到日子就藏起来（也交互不到）
+	// 配了 MinDay 的 NPC（正规买家）需要每帧检查日子，见 UpdateDayGate 的注释
 	if (MinDay > 0)
 	{
-		UstudyGameInstance* GI = GetRun(this);
-		if (GI && GI->DayIndex < MinDay)
-		{
-			SetActorHiddenInGame(true);
-			SetActorEnableCollision(false);
-		}
+		SetActorTickEnabled(true);
+		UpdateDayGate();
+	}
+}
+
+void AMerchant::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (MinDay > 0)
+	{
+		UpdateDayGate();
+	}
+}
+
+void AMerchant::UpdateDayGate()
+{
+	// 为什么每帧算、而不是在 BeginPlay 里算一次：
+	//   按 R 重开时，"把天数重置成 1"发生在 GameMode::BeginPlay 里，
+	//   而关卡里各个 Actor 的 BeginPlay 顺序是不保证的 ——
+	//   如果商人先跑，它看到的还是上一局的第 2 天，于是不会藏起来。
+	//   每帧对一次就永远不会错。
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI)
+	{
+		return;
+	}
+
+	const bool bShouldHide = (GI->DayIndex < MinDay);
+	if (bShouldHide != IsHidden())
+	{
+		SetActorHiddenInGame(bShouldHide);
+		SetActorEnableCollision(!bShouldHide);
 	}
 }
 
@@ -100,6 +130,12 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	{
 		return;
 	}
+
+	// 必须在这里重新认领发起者：
+	// 玩家点一次选项后，DialogChoose 会先 CloseDialog()（那一步把 DialogMerchant 清成了 nullptr），
+	// 然后才回调 OnDialogOption → 里面可能又调 BuildDialog 重刷对话框。
+	// 不重新认领的话，重刷出来的对话框是"没有主人"的，之后点任何选项都没反应。
+	Character->SetDialogMerchant(this);
 
 	// ---- 床：睡到下一天（晚上才用，所以不参与"太晚了"封锁） ----
 	if (Kind == EMerchantKind::Bed)
@@ -240,20 +276,35 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	{
 		if (Index == 0)
 		{
-			// 最后一天：睡觉 = 直接收工结算，不进第 3 天
-			if (GI->DayIndex >= UstudyGameInstance::TotalDays)
-			{
-				if (AstudyGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AstudyGameMode>() : nullptr)
-				{
-					UE_LOG(LogTemp, Log, TEXT("[Merchant] 最后一天睡觉 → 结算"));
-					GM->ForceSettle();
-				}
-				return;
-			}
+			// 先黑屏 1.5 秒，再真的睡/结算 —— 给玩家一个"时间过去了"的感觉
+			Character->ShowTransition(TEXT("睡觉中 zzzzz"), 1.5f);
 
-			GI->SleepToNextDay();
-			UE_LOG(LogTemp, Log, TEXT("[Merchant] 睡到第 %d 天"), GI->DayIndex);
-			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+			FTimerHandle SleepHandle;
+			GetWorldTimerManager().SetTimer(SleepHandle,
+				FTimerDelegate::CreateWeakLambda(this, [this]()
+				{
+					UstudyGameInstance* Run = GetRun(this);
+					if (!Run)
+					{
+						return;
+					}
+
+					// 最后一天：睡觉 = 收工结算，不进第 3 天
+					if (Run->DayIndex >= UstudyGameInstance::TotalDays)
+					{
+						if (AstudyGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AstudyGameMode>() : nullptr)
+						{
+							UE_LOG(LogTemp, Log, TEXT("[Merchant] 最后一天睡觉 → 结算"));
+							GM->ForceSettle();
+						}
+						return;
+					}
+
+					Run->SleepToNextDay();
+					UE_LOG(LogTemp, Log, TEXT("[Merchant] 睡到第 %d 天"), Run->DayIndex);
+					UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+				}),
+				1.5f, false);
 		}
 		return;
 	}
@@ -286,10 +337,18 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 
 			UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：提前返回营地"), *DisplayName);
 
-			// 走之前把背包里没交的黄金一起带走
-			UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+			// 先黑屏 1.5 秒再传送
+			Character->ShowTransition(TEXT("返回营地......"), 1.5f);
 
-			UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+			FTimerHandle TravelHandle;
+			GetWorldTimerManager().SetTimer(TravelHandle,
+				FTimerDelegate::CreateWeakLambda(this, [this]()
+				{
+					// 走之前把背包里没交的黄金一起带走
+					UstudyGameInstance::CollectCarriedGoldFromPlayers(GetWorld());
+					UGameplayStatics::OpenLevel(this, FName(TEXT("Camp")));
+				}),
+				1.5f, false);
 		}
 		else if (Index == 1)
 		{

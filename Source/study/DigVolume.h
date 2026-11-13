@@ -59,6 +59,16 @@ public:
 	float NoiseScale = 0.03f;
 
 	/**
+	 * 噪声叠几层（FBM 的八度数）。
+	 * 第 1 层 = 大起伏，第 2 层 = 中棱角，第 3 层 = 8cm 级细颗粒。
+	 *
+	 * 现在步长是 10cm，第 3 层（~8cm 粒度）根本采样不出来，纯属白算 ——
+	 * 所以用 2 层：视觉几乎无差别，成本直接省 1/3。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "1", ClampMax = "4"))
+	int32 NoiseOctaves = 2;
+
+	/**
 	 * 只在"朝向 NoiseDirection 的那一面"加噪声起伏，其余五面保持平整。
 	 *
 	 * 为什么要这个：分块拼矿洞时，如果每块六面都起伏，相邻块在交界面上
@@ -140,6 +150,13 @@ public:
 	float DropSizeLargeCm = 40.f;
 
 protected :
+	/**
+	 * 缓存的"本块 → 世界"变换。
+	 * EvalSDF 里每个采样点都要把 P 变到世界坐标（噪声要用世界坐标才能跨块连续），
+	 * 而 GetActorTransform() 每调一次都有开销 —— 一次重建要调两万多次。
+	 * 所以在 RebuildMesh 开头存一份，采样时直接用。
+	 */
+	FTransform CachedToWorld;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	double EvalFBM(const FVector3d& P, double Scale) const;
 	double EvalSDF(const FVector3d& P) const;

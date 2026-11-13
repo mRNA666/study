@@ -49,6 +49,8 @@ class STUDY_API AMerchant : public AActor
 public:
 	AMerchant();
 
+	virtual void Tick(float DeltaSeconds) override;
+
 	/** 身体（白色机器人） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Merchant")
 	TObjectPtr<USkeletalMeshComponent> Body;
@@ -116,4 +118,7 @@ protected:
 	/** 矿洞向导：玩家是不是刚点过"查看已存放"（点了才把数字写进正文） */
 	UPROPERTY(Transient)
 	bool bStashRevealed = false;
+
+	/** 按 MinDay 决定露不露面。要每帧算 —— 见 .cpp 里的注释 */
+	void UpdateDayGate();
 };

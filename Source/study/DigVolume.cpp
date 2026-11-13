@@ -45,6 +45,8 @@ ADigVolume::ADigVolume()
 }
 void ADigVolume::OnConstruction(const FTransform& Transform)
 {
+	// 调试打印会用 EvalSDF，所以这里先垫一份变换（RebuildMesh 里还会再刷一次）
+	CachedToWorld = Transform;
 	Super::OnConstruction(Transform);
 	if (NoiseAmplitudeCm < 0.01f)
 	{
@@ -81,6 +83,9 @@ void ADigVolume::OnConstruction(const FTransform& Transform)
 void ADigVolume::RebuildMesh()
 {
 	using namespace UE::Geometry;
+
+	// 采样前先把变换存好（EvalSDF 里两万多次采样都要用它）
+	CachedToWorld = GetActorTransform();
 
 	const double H = SizeCm * 0.5;
 	const double Amp = NoiseAmplitudeCm;
@@ -285,7 +290,8 @@ void ADigVolume::FlushPhysics()
 double ADigVolume::EvalFBM(const FVector3d& P, double Scale) const
 {
 	double Sum = 0.0, OctaveAmp = 1.0, Freq = 1.0;
-	for (int32 i = 0;i < 3;i++)
+	const int32 Octaves = FMath::Clamp(NoiseOctaves, 1, 4);
+	for (int32 i = 0; i < Octaves; ++i)
 	{
 		Sum += OctaveAmp * FMath::PerlinNoise3D(FVector(P.X * Scale * Freq,
 			P.Y * Scale * Freq,
@@ -304,9 +310,46 @@ double ADigVolume::EvalSDF(const FVector3d& P) const
 	const double Inside = FMath::Min(FMath::Max(Q.X, FMath::Max(Q.Y, Q.Z)), 0.0);
 	const double BoxDist = Outside.Length() + Inside;
 
+	// ---------------- 早退：离盒面远到"噪声掀不动"的点，直接返回 ----------------
+	//
+	// 噪声最多只能把表面从盒面推开 NoiseAmplitudeCm × 1.8 那么远，
+	// 所以 BoxDist 超出这个范围的点，加不加噪声都还是同一个符号：
+	//   · 远在盒子外面 → 一定是空气（洞只会把它推得更靠外）
+	//   · 深在盒子里面 → 一定是实心（除非那里被挖了个洞）
+	// MC 只会在"正负混着的格子"上生成面，所以这些点算不算噪声，结果网格一模一样。
+	//
+	// 一个 2 米块里约 2/3 的采样点属于这两种情况 —— 这是最省的一刀。
+	const double MaxNoise = NoiseAmplitudeCm * 1.8;		// FBM 幅度上限（保守取值）
+	const double SafeBand = MaxNoise + SampleStepCm;	// 再留一格，保证插值不会用到早退点
+
+	if (BoxDist > SafeBand)
+	{
+		return BoxDist;
+	}
+
+	if (BoxDist < -SafeBand)
+	{
+		// 深处：先排查是不是被挖空了（洞的检查只算距离平方，比噪声便宜得多）
+		bool bInsideHole = false;
+		for (const FDigHole& Hole : DigHoles)
+		{
+			if ((P - Hole.Center).SizeSquared() < Hole.RadiusCm * Hole.RadiusCm)
+			{
+				bInsideHole = true;
+				break;
+			}
+		}
+
+		if (!bInsideHole)
+		{
+			return BoxDist;
+		}
+	}
+
 	// 噪声用【世界坐标】：相邻块在同一个世界点上会算出同一个值，
 	// 暴露面的起伏才能跨块连续（用局部坐标的话每块从自己原点起算，地面会出现锯齿）。
-	const FVector3d WorldP = GetActorTransform().TransformPosition(P);
+	// 变换用缓存好的那份 —— 这个函数一次重建要跑两万多次，别每次都去问 Actor 要变换。
+	const FVector3d WorldP = CachedToWorld.TransformPosition(P);
 
 	// 方向遮罩：只有朝向 NoiseDirection 的那一面才有起伏。
 	// 其余五面保持纯粹的 BoxDist —— 在盒面上恰好等于 0，相邻块才能严丝合缝贴住。

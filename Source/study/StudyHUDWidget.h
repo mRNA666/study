@@ -89,6 +89,21 @@ protected:
 
 	UPROPERTY() TArray<TObjectPtr<UButton>> OptionButtons;
 
+	// ---------------- 矿洞加载遮罩 ----------------
+
+	UPROPERTY() TObjectPtr<UBorder> LoadingBorder;
+	UPROPERTY() TObjectPtr<UTextBlock> LoadingText;
+	UPROPERTY() TObjectPtr<UProgressBar> LoadingBar;
+
+	/** 上一帧是不是在加载（用来检测状态变化） */
+	bool bWasLoading = false;
+
+	/** 缓存的矿洞生成器（每帧遍历关卡太浪费） */
+	TWeakObjectPtr<class AMineGenerator> CachedMineGen;
+
+	/** 进入/离开加载状态：显示遮罩 + 锁住玩家操作 */
+	void SetLoadingState(bool bLoading);
+
 	/** 上一帧对话是不是开着（用来检测状态变化） */
 	bool bWasDialogOpen = false;
 };

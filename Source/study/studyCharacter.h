@@ -161,6 +161,15 @@ protected:
 	/** 开关头灯（按 E，且没有别的事情可做时） */
 	void ToggleHeadLight();
 
+public:
+	// ---------------- 黑屏过渡（睡觉 / 传送回营地） ----------------
+
+	/** 弹一段黑屏文字，Seconds 秒后自动消失 */
+	void ShowTransition(const FString& Text, float Seconds);
+
+	bool IsTransitioning() const { return TransitionTimeLeft > 0.f; }
+	const FString& GetTransitionText() const { return TransitionText; }
+
 	// ---------------- 视角 ----------------
 
 	/**
@@ -218,6 +227,10 @@ private:
 
 	/** 准星是不是指着梯子（每帧在 UpdateFocus 里更新） */
 	bool bFocusingLadder = false;
+
+	/** 黑屏过渡：显示的文字和剩余时间 */
+	FString TransitionText;
+	float TransitionTimeLeft = 0.f;
 
 	/** 按住 E 时的循环计时器 */
 	FTimerHandle PickupRepeatHandle;

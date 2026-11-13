@@ -54,6 +54,12 @@ protected:
 	/** 昼夜：按游戏时钟调太阳和天光（只在营地） */
 	void UpdateDayNightLighting();
 
+	/** 黑屏 1.5 秒后送回营地（矿洞超时 / 太晚两种情况共用） */
+	void BeginReturnToCamp(const FString& TransitionText);
+
+	/** 已经在走"送回营地"流程了，防止 Tick 每帧重复触发 */
+	bool bReturnToCampPending = false;
+
 	/** 缓存的太阳 / 天光，避免每帧遍历关卡找 */
 	TWeakObjectPtr<class ADirectionalLight> SunLight;
 	TWeakObjectPtr<class ASkyLight> SkyLightActor;
