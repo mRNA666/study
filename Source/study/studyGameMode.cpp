@@ -19,6 +19,8 @@
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
 #include "studyCharacter.h"
+#include "StudySounds.h"
+#include "Components/AudioComponent.h"
 #include "TimerManager.h"
 
 namespace
@@ -116,6 +118,12 @@ void AstudyGameMode::BeginPlay()
 	}
 
 	EnsureWorldBasics();
+
+	// 矿洞环境音：低音量的风声，循环播放（只在矿洞里）
+	if (MapName.Contains(TEXT("Mine")) && !AmbienceComp)
+	{
+		AmbienceComp = UGameplayStatics::SpawnSound2D(this, StudySounds::MineAmbience(), 0.30f);
+	}
 
 	if (MapName.Contains(TEXT("Camp")) && bAutoSpawnCampMerchants)
 	{
@@ -461,6 +469,8 @@ void AstudyGameMode::EndMatch()
 	GS->SetFinalUnsoldCash(UnsoldCash);
 	GS->SetFinalCash(GI->Cash);
 	GS->SetPhase(EGamePhase::Finished);
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::GameOver(), 0.9f);
 
 	UE_LOG(LogTemp, Log, TEXT("[Match] 结算：未卖 %.1f g 折算 +%d 币，最终现金 %d 币"),
 		UnsoldGrams, UnsoldCash, GI->Cash);

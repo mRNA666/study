@@ -6,6 +6,7 @@
 #include "studyGameInstance.h"
 #include "studyGameState.h"
 #include "studyGameMode.h"
+#include "StudySounds.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
@@ -441,6 +442,9 @@ void AMerchant::SellGold(float Grams)
 	GI->GoldGrams -= Sold;
 	GI->Cash += Earned;
 
+	// 2D：柜台就在面前，不需要衰减定位
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
 	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 收走 %.1f g（黑市价 65%%）→ +%d 币；剩 %.1f g，现金 %d"),
 		*DisplayName, Sold, Earned, GI->GoldGrams, GI->Cash);
 }
@@ -467,6 +471,9 @@ void AMerchant::SellGoldLegit(float Grams)
 	GI->BuyerQuotaGrams -= Sold;
 	GI->Cash += Earned;
 
+	// 2D：柜台就在面前，不需要衰减定位
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
 	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 全额收走 %.1f g → +%d 币；配额剩 %.1f g，现金 %d"),
 		*DisplayName, Sold, Earned, GI->BuyerQuotaGrams, GI->Cash);
 }
@@ -487,6 +494,9 @@ bool AMerchant::BuyMineRight()
 
 	GI->Cash -= MineRightPrice;
 	GI->RightsBoughtToday++;
+
+	// 2D：柜台就在面前，不需要衰减定位
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
 
 	// 一次开采 3 分钟（真实时间）。
 	// 换算成游戏分钟必须跟着流速走：游戏分钟 = 真实秒 × (60 / RealSecondsPerGameHour)。

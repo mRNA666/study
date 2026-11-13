@@ -447,8 +447,10 @@ void AMineGenerator::BuildStashArea()
 
 	// ---- 梯子：上端正好到平台顶面（不再冒出去）----
 	{
+		// 往 +X（朝平台方向）前移 10cm，让梯子正面贴上平台近边
+		const float LadderForwardCm = 10.f;
 		const FTransform LadderXf(FRotator::ZeroRotator,
-			GetActorLocation() + FVector(Local.X, Local.Y, -15.f));
+			GetActorLocation() + FVector(Local.X + LadderForwardCm, Local.Y, -15.f));
 
 		ALadderActor* Ladder = World->SpawnActorDeferred<ALadderActor>(
 			ALadderActor::StaticClass(), LadderXf, nullptr, nullptr,
@@ -458,7 +460,7 @@ void AMineGenerator::BuildStashArea()
 			Ladder->Height = PlatformTopZ + 15.f;
 
 			if (UStaticMesh* LadderMesh = LoadObject<UStaticMesh>(nullptr,
-				TEXT("/Game/Ladder/SM_Ladder.SM_Ladder")))
+				TEXT("/Game/DirtyGold/Art/Props/Mining/SM_Ladder_LOD0.SM_Ladder_LOD0")))
 			{
 				Ladder->Frame->SetStaticMesh(LadderMesh);
 			}
@@ -503,6 +505,8 @@ void AMineGenerator::BuildStashArea()
 		{
 			Guide->Kind = EMerchantKind::MineGuide;
 			Guide->DisplayName = TEXT("矿洞向导");
+			// 交互半径缩到 130cm：不要隔着平台就能说话
+			Guide->InteractRadiusCm = 130.f;
 			Guide->FinishSpawning(GuideXf);
 		}
 	}

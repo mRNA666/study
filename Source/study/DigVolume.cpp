@@ -13,6 +13,8 @@
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "DropItem.h"
+#include "StudySounds.h"
+#include "Kismet/GameplayStatics.h"
 
 DEFINE_LOG_CATEGORY(LogDig);
 
@@ -501,6 +503,14 @@ void ADigVolume::SpawnDropForRemovedVolume(float RemovedVolumeIn, float SphereVo
 				const float GoldGrams = static_cast<float>(WeightKg) * Grade * GramsPerKgOre * RockMultiplier;
 
 				Drop->InitDrop(WeightKg, Grade, TargetSizeCm, DropMat, GoldGrams);
+
+				// 石头落地音的"碎块"感（这个素材开头有 100ms 静音，跳过去）
+				if (UWorld* DropWorld = GetWorld())
+				{
+					// 同上：改 2D，避开打包版的 3D 音效崩
+					UGameplayStatics::SpawnSound2D(DropWorld, StudySounds::Debris(),
+						0.55f, FMath::FRandRange(0.9f, 1.1f), 0.10f);
+				}
 
 				UE_LOG(LogDig, Warning, TEXT("[Drop] 已生成 %s（%.1f kg，%s，含金 %.0f%%，值 %.2f g）"),
 					*GetNameSafe(Drop), WeightKg,

@@ -7,6 +7,7 @@
 #include "studyGameInstance.h"
 #include "Merchant.h"
 #include "MineGenerator.h"
+#include "StudySounds.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "Blueprint/WidgetTree.h"
@@ -618,6 +619,9 @@ void UStudyHUDWidget::Refresh()
 
 void UStudyHUDWidget::ChooseOption(int32 Index)
 {
+	// 对话里所有可点的东西（选项 / 确认卖出）都走这个音效
+	UGameplayStatics::PlaySound2D(this, StudySounds::Click(), 0.8f);
+
 	if (AstudyCharacter* Character = GetStudyCharacter())
 	{
 		Character->ChooseDialogOption(Index);
@@ -626,6 +630,8 @@ void UStudyHUDWidget::ChooseOption(int32 Index)
 
 void UStudyHUDWidget::OnNumberSubmit()
 {
+	UGameplayStatics::PlaySound2D(this, StudySounds::Click(), 0.8f);
+
 	AstudyCharacter* Character = GetStudyCharacter();
 	if (!Character || !NumberBox)
 	{

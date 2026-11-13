@@ -11,6 +11,7 @@ class UInputComponent;
 class USkeletalMeshComponent;
 class UCameraComponent;
 class USpotLightComponent;
+class UStaticMeshComponent;
 class UInputAction;
 class AMerchant;
 struct FInputActionValue;
@@ -186,6 +187,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Feel")
 	float DigShakeOffsetCm = 1.2f;
 
+	/**
+	 * 挖矿音效从第几秒开始播。
+	 * 实测 Rock_Impact_11 / 37 开头只有 0.1 / 2.7 ms 静音 —— 素材是干净的，
+	 * 所以这里默认 0。如果换成了开头有静音的素材，把这个调大即可。
+	 */
+	UPROPERTY(EditAnywhere, Category = "Feel", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float DigSoundStartTime = 0.f;
+
+	/** 拾取音效跳过开头多少秒（实测 Bag_Handle_1-5 开头有 90ms 静音） */
+	UPROPERTY(EditAnywhere, Category = "Feel", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float PickupSoundStartTime = 0.09f;
+
 	/** 震屏时长（秒） */
 	UPROPERTY(EditAnywhere, Category = "Feel")
 	float DigShakeDuration = 0.12f;
@@ -216,6 +229,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Bag")
 	float PickupInterval = 0.12f;
 
+	/** 走多远响一次脚步（cm）。走 600cm/s、140cm 一步 → 约每秒 4 步 */
+	UPROPERTY(EditAnywhere, Category = "Feel")
+	float FootstepDistanceCm = 140.f;
+
 private:
 
 	/** 准星当前对准的掉落物 */
@@ -231,6 +248,9 @@ private:
 	/** 黑屏过渡：显示的文字和剩余时间 */
 	FString TransitionText;
 	float TransitionTimeLeft = 0.f;
+
+	/** 脚步：累计走过的距离（到 FootstepDistanceCm 就响一次） */
+	float FootstepAccumCm = 0.f;
 
 	/** 按住 E 时的循环计时器 */
 	FTimerHandle PickupRepeatHandle;

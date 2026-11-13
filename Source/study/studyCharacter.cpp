@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "studyCharacter.h"
 #include "Animation/AnimInstance.h"
@@ -6,6 +6,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -17,6 +18,8 @@
 #include "studyGameInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Merchant.h"
+#include "StudySounds.h"
+#include "Kismet/GameplayStatics.h"
 #include "LadderActor.h"
 #include "EngineUtils.h"
 #include "study.h"
@@ -72,6 +75,7 @@ AstudyCharacter::AstudyCharacter()
 	HeadLight->SetOuterConeAngle(38.f);
 	HeadLight->SetLightColor(FLinearColor(1.f, 0.94f, 0.82f));
 	HeadLight->SetCastShadows(true);
+
 }
 
 void AstudyCharacter::BeginPlay()
@@ -98,6 +102,13 @@ void AstudyCharacter::BeginPlay()
 	{
 		CameraBaseRelativeLocation = Cam->GetRelativeLocation();
 	}
+
+	// 预热音效缓存：第一次 LoadObject 要读盘，正好撞上第一下挖掘会听出延迟
+	StudySounds::Dig();
+	StudySounds::Pickup();
+	StudySounds::Debris();
+
+	// 装备栏的初始状态（镐子显示/隐藏）
 }
 
 void AstudyCharacter::ShowTransition(const FString& Text, float Seconds)
@@ -113,6 +124,27 @@ void AstudyCharacter::Tick(float DeltaSeconds)
 	if (TransitionTimeLeft > 0.f)
 	{
 		TransitionTimeLeft = FMath::Max(TransitionTimeLeft - DeltaSeconds, 0.f);
+	}
+
+	// ---- 脚步：按"走过的距离"触发，而不是按时间 ----
+	// 按时间触发的话，跑起来脚步会变稀、慢走会变密，听起来很假。
+	const UCharacterMovementComponent* Move = GetCharacterMovement();
+	const float Speed2D = Move ? Move->Velocity.Size2D() : 0.f;
+
+	if (Move && Move->IsMovingOnGround() && Speed2D > 40.f)
+	{
+		FootstepAccumCm += Speed2D * DeltaSeconds;
+
+		if (FootstepAccumCm >= FootstepDistanceCm)
+		{
+			FootstepAccumCm = 0.f;
+			// 脚步音效暂时关掉（素材不匹配，听起来像打鼓）
+		}
+	}
+	else
+	{
+		// 停下来时归零，避免下次起步就立刻响一声
+		FootstepAccumCm = 0.f;
 	}
 
 	// 每帧更新一次"准星对准了哪块石头"。只做一次直线检测，很便宜。
@@ -187,6 +219,10 @@ void AstudyCharacter::TryPickup()
 	Best->Destroy();
 
 	UpdateSpeedPenalty();
+
+	// 拾取音效（Bag_Handle_1-5 开头有 90ms 静音，跳过它）
+	UGameplayStatics::SpawnSound2D(this, StudySounds::Pickup(), 0.7f,
+		FMath::FRandRange(0.95f, 1.08f), PickupSoundStartTime);
 
 	UE_LOG(LogTemplateCharacter, Warning,
 		TEXT("[Bag] 捡起 %.1f kg %s（含金 %.0f%%，值 %.2f g）→ %.1f / %.1f kg（%.0f%%）移速 x%.2f"),
@@ -357,6 +393,7 @@ void AstudyCharacter::OnDialogDigit(int32 Digit)
 		{
 			DialogInput.AppendChar(static_cast<TCHAR>(TEXT('0') + Digit));
 		}
+		return;
 	}
 }
 
@@ -431,6 +468,8 @@ void AstudyCharacter::ToggleHeadLight()
 
 	bHeadLightOn = !bHeadLightOn;
 	HeadLight->SetVisibility(bHeadLightOn, true);
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::Switch(), 0.7f);
 
 	UE_LOG(LogTemplateCharacter, Log, TEXT("[HeadLight] %s"), bHeadLightOn ? TEXT("开") : TEXT("关"));
 }
@@ -687,6 +726,20 @@ void AstudyCharacter::PerformDig()
 		// 做法：把球碰到的所有 DigVolume 都挖一遍，
 		// **把各块挖掉的体积加起来**，最后只生成【一块】掉落物。
 		ADigVolume* Primary = Cast<ADigVolume>(Hit.GetActor());
+
+		// 先出声，再干活：
+		// 挖一次要重建网格（2~3ms）再生成掉落物，等这些做完才播声音，
+		// 耳朵能听出"敲了但没响"的延迟。所以一确认打到石头就立刻播。
+		//
+		// StartTime：这些素材开头带一点静音，用 SpawnSoundAtLocation 的 StartTime
+		// 直接跳过它（不用去改资产）。可在角色蓝图的 Feel 分类里调。
+		if (Primary)
+		{
+			// 用 2D：第一人称下音源就在耳朵边，不需要衰减定位。
+			// （打包版里带衰减的 3D 音效会在 FAudioDevice::CreateComponent 里崩）
+			UGameplayStatics::SpawnSound2D(this, StudySounds::Dig(),
+				0.85f, FMath::FRandRange(0.88f, 1.12f), DigSoundStartTime);
+		}
 
 		TArray<FOverlapResult> Overlaps;
 		const FCollisionShape DigSphere = FCollisionShape::MakeSphere(DigRadiusCm);
