@@ -385,6 +385,9 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 		GS->SetClock(GI->ClockMinutes, GI->DayIndex);
 	}
 
+	// 模拟对手：他们有自己的时钟，和玩家卖不卖金没关系
+	GI->TickRivals(DeltaSeconds);
+
 	// 昼夜光照（只在营地生效）
 	UpdateDayNightLighting();
 

@@ -165,6 +165,9 @@ protected:
 	/** ESC：有对话框就取消对话，没有就开关设置菜单 */
 	void OnEscapePressed();
 
+	/** Tab：开关资产排行面板 */
+	void OnRankPressed();
+
 public:
 	/** 设置头灯亮度倍数（1 = 默认）。ESC 菜单里的滑块调这个 */
 	UFUNCTION(BlueprintCallable, Category = "HeadLight")

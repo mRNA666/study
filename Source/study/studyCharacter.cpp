@@ -342,6 +342,9 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		PlayerInputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &AstudyCharacter::DialogBackspace);
 		// ESC：没开对话框时开关设置菜单，开了就取消对话（在 OnEscapePressed 里分发）
 		PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AstudyCharacter::OnEscapePressed);
+
+		// Tab：资产排行（按住看，再按一下关）
+		PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AstudyCharacter::OnRankPressed);
 	}
 }
 
@@ -459,6 +462,17 @@ void AstudyCharacter::DialogChoose(int32 Index)
 	if (M)
 	{
 		M->OnDialogOption(this, Index);
+	}
+}
+
+void AstudyCharacter::OnRankPressed()
+{
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+		{
+			HUD->ToggleRank();
+		}
 	}
 }
 

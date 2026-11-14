@@ -215,8 +215,9 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
+		const float EffectiveRate = AstudyGameState::BlackMarketRate * GI->BlackMarketMultiplier;
 		const int32 Estimate = FMath::RoundToInt(
-			GI->GoldGrams * AstudyGameState::BlackMarketRate * static_cast<float>(AstudyGameState::BasePricePerGram));
+			GI->GoldGrams * EffectiveRate * static_cast<float>(AstudyGameState::BasePricePerGram));
 
 		// 打开行内数字输入（框里填"卖多少克"）
 		Character->SetDialogNumberEnabled(GI->GoldGrams);
@@ -227,8 +228,8 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 
 		Character->OpenOptionDialog(
 			DisplayName,
-			FString::Printf(TEXT("手上的金重：%.1f g\n黑市价：正规价的 65%%\n现金：%d 币"),
-				GI->GoldGrams, GI->Cash),
+			FString::Printf(TEXT("手上的金重：%.1f g\n黑市价：正规价的 %.0f%%（抛售越多，价越低）\n现金：%d 币"),
+				GI->GoldGrams, EffectiveRate * 100.f, GI->Cash),
 			Options);
 		return;
 	}
@@ -436,17 +437,21 @@ void AMerchant::SellGold(float Grams)
 		return;
 	}
 
+	const float EffectiveRate = AstudyGameState::BlackMarketRate * GI->BlackMarketMultiplier;
 	const int32 Earned = FMath::RoundToInt(
-		Sold * AstudyGameState::BlackMarketRate * static_cast<float>(AstudyGameState::BasePricePerGram));
+		Sold * EffectiveRate * static_cast<float>(AstudyGameState::BasePricePerGram));
 
 	GI->GoldGrams -= Sold;
 	GI->Cash += Earned;
 
+	// 抛售砸价：卖得越多，黑市价掉得越多（对手也会砸，所以这是真竞争）
+	GI->ApplyBlackMarketDump(Sold);
+
 	// 2D：柜台就在面前，不需要衰减定位
 	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
 
-	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 收走 %.1f g（黑市价 65%%）→ +%d 币；剩 %.1f g，现金 %d"),
-		*DisplayName, Sold, Earned, GI->GoldGrams, GI->Cash);
+	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 收走 %.1f g（黑市价 %.0f%%）→ +%d 币；剩 %.1f g，现金 %d，市场 x%.2f"),
+		*DisplayName, Sold, EffectiveRate * 100.f, Earned, GI->GoldGrams, GI->Cash, GI->BlackMarketMultiplier);
 }
 
 void AMerchant::SellGoldLegit(float Grams)

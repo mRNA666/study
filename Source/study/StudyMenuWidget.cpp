@@ -29,17 +29,17 @@
 namespace
 {
 	/** 统一取字体：FCoreStyle 的默认字体带 CJK 回退，中文能正常显示 */
-	FSlateFontInfo Font(int32 Size, bool bBold = false)
+	FSlateFontInfo MenuUIFont(int32 Size, bool bBold = false)
 	{
 		return FCoreStyle::GetDefaultFontStyle(bBold ? "Bold" : "Regular", Size);
 	}
 
-	UTextBlock* MakeText(UWidgetTree* Tree, const FString& Str, int32 Size,
+	UTextBlock* MenuUIText(UWidgetTree* Tree, const FString& Str, int32 Size,
 		const FLinearColor& Color, bool bBold = false)
 	{
 		UTextBlock* T = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
 		T->SetText(FText::FromString(Str));
-		T->SetFont(Font(Size, bBold));
+		T->SetFont(MenuUIFont(Size, bBold));
 		T->SetColorAndOpacity(FSlateColor(Color));
 		return T;
 	}
@@ -48,7 +48,7 @@ namespace
 	USizeBox* MakeButton(UWidgetTree* Tree, const FString& Label, float W, float H, UButton*& OutButton)
 	{
 		UButton* B = Tree->ConstructWidget<UButton>(UButton::StaticClass());
-		UTextBlock* T = MakeText(Tree, Label, 26, FLinearColor(1.f, 0.97f, 0.9f, 1.f), true);
+		UTextBlock* T = MenuUIText(Tree, Label, 26, FLinearColor(1.f, 0.97f, 0.9f, 1.f), true);
 		T->SetJustification(ETextJustify::Center);
 		B->AddChild(T);
 
@@ -62,7 +62,7 @@ namespace
 	}
 
 	/** 给一个控件套上固定宽度（用来做"标签 | 滑块 | 数值"三栏） */
-	USizeBox* WrapWidth(UWidgetTree* Tree, UWidget* W, float Width)
+	USizeBox* MenuUIWidthBox(UWidgetTree* Tree, UWidget* W, float Width)
 	{
 		USizeBox* Box = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
 		Box->SetWidthOverride(Width);
@@ -71,7 +71,7 @@ namespace
 	}
 
 	/** 往 VerticalBox 里加一项，上下留白 + 水平居中 */
-	void AddRow(UVerticalBox* Box, UWidget* W, float PadY = 10.f)
+	void MenuUIRow(UVerticalBox* Box, UWidget* W, float PadY = 10.f)
 	{
 		if (UVerticalBoxSlot* Slot = Box->AddChildToVerticalBox(W))
 		{
@@ -122,12 +122,12 @@ void UStudyMenuWidget::BuildLayout()
 	MainPage = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 	PlaceCenter(Canvas, MainPage);
 
-	AddRow(MainPage, MakeText(WidgetTree, TEXT("脏  金"), 88, Gold, true), 0.f);
-	AddRow(MainPage, MakeText(WidgetTree, TEXT("D I R T Y   G O L D"), 20, Dim), 4.f);
+	MenuUIRow(MainPage, MenuUIText(WidgetTree, TEXT("脏  金"), 88, Gold, true), 0.f);
+	MenuUIRow(MainPage, MenuUIText(WidgetTree, TEXT("D I R T Y   G O L D"), 20, Dim), 4.f);
 
 	USpacer* GapMain = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
 	GapMain->SetSize(FVector2D(0.f, 46.f));
-	AddRow(MainPage, GapMain, 0.f);
+	MenuUIRow(MainPage, GapMain, 0.f);
 
 	{
 		UButton* Btn = nullptr;
@@ -136,7 +136,7 @@ void UStudyMenuWidget::BuildLayout()
 		{
 			Btn->OnClicked.AddDynamic(this, &UStudyMenuWidget::OnStartClicked);
 		}
-		AddRow(MainPage, Box);
+		MenuUIRow(MainPage, Box);
 	}
 	{
 		UButton* Btn = nullptr;
@@ -145,18 +145,18 @@ void UStudyMenuWidget::BuildLayout()
 		{
 			Btn->OnClicked.AddDynamic(this, &UStudyMenuWidget::OnQuitClicked);
 		}
-		AddRow(MainPage, Box);
+		MenuUIRow(MainPage, Box);
 	}
 
 	// ---------------- ESC 设置页 ----------------
 	PausePage = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 	PlaceCenter(Canvas, PausePage);
 
-	AddRow(PausePage, MakeText(WidgetTree, TEXT("设  置"), 56, Gold, true), 0.f);
+	MenuUIRow(PausePage, MenuUIText(WidgetTree, TEXT("设  置"), 56, Gold, true), 0.f);
 
 	USpacer* GapPause = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
 	GapPause->SetSize(FVector2D(0.f, 30.f));
-	AddRow(PausePage, GapPause, 0.f);
+	MenuUIRow(PausePage, GapPause, 0.f);
 
 	// 主音量：标签 | 滑块 | 数值
 	{
@@ -169,13 +169,13 @@ void UStudyMenuWidget::BuildLayout()
 		VolumeSlider->SetValue(0.7f);
 		VolumeSlider->OnValueChanged.AddDynamic(this, &UStudyMenuWidget::OnVolumeChanged);
 
-		VolumeValueText = MakeText(WidgetTree, TEXT("70%"), 24, Dim);
+		VolumeValueText = MenuUIText(WidgetTree, TEXT("70%"), 24, Dim);
 
-		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(WrapWidth(WidgetTree, MakeText(WidgetTree, TEXT("主音量"), 24, Dim), 150.f)))
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MenuUIWidthBox(WidgetTree, MenuUIText(WidgetTree, TEXT("主音量"), 24, Dim), 150.f)))
 		{
 			S->SetVerticalAlignment(VAlign_Center);
 		}
-		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(WrapWidth(WidgetTree, VolumeSlider, 320.f)))
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MenuUIWidthBox(WidgetTree, VolumeSlider, 320.f)))
 		{
 			S->SetVerticalAlignment(VAlign_Center);
 		}
@@ -184,7 +184,7 @@ void UStudyMenuWidget::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Center);
 			S->SetPadding(FMargin(16.f, 0.f, 0.f, 0.f));
 		}
-		AddRow(PausePage, Row, 12.f);
+		MenuUIRow(PausePage, Row, 12.f);
 	}
 
 	// 头灯亮度
@@ -198,13 +198,13 @@ void UStudyMenuWidget::BuildLayout()
 		HeadLightSlider->SetValue(1.f);
 		HeadLightSlider->OnValueChanged.AddDynamic(this, &UStudyMenuWidget::OnHeadLightChanged);
 
-		HeadLightValueText = MakeText(WidgetTree, TEXT("100%"), 24, Dim);
+		HeadLightValueText = MenuUIText(WidgetTree, TEXT("100%"), 24, Dim);
 
-		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(WrapWidth(WidgetTree, MakeText(WidgetTree, TEXT("头灯亮度"), 24, Dim), 150.f)))
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MenuUIWidthBox(WidgetTree, MenuUIText(WidgetTree, TEXT("头灯亮度"), 24, Dim), 150.f)))
 		{
 			S->SetVerticalAlignment(VAlign_Center);
 		}
-		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(WrapWidth(WidgetTree, HeadLightSlider, 320.f)))
+		if (UHorizontalBoxSlot* S = Row->AddChildToHorizontalBox(MenuUIWidthBox(WidgetTree, HeadLightSlider, 320.f)))
 		{
 			S->SetVerticalAlignment(VAlign_Center);
 		}
@@ -213,12 +213,12 @@ void UStudyMenuWidget::BuildLayout()
 			S->SetVerticalAlignment(VAlign_Center);
 			S->SetPadding(FMargin(16.f, 0.f, 0.f, 0.f));
 		}
-		AddRow(PausePage, Row, 12.f);
+		MenuUIRow(PausePage, Row, 12.f);
 	}
 
 	USpacer* GapPause2 = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
 	GapPause2->SetSize(FVector2D(0.f, 26.f));
-	AddRow(PausePage, GapPause2, 0.f);
+	MenuUIRow(PausePage, GapPause2, 0.f);
 
 	{
 		UButton* Btn = nullptr;
@@ -227,7 +227,7 @@ void UStudyMenuWidget::BuildLayout()
 		{
 			Btn->OnClicked.AddDynamic(this, &UStudyMenuWidget::OnResumeClicked);
 		}
-		AddRow(PausePage, Box);
+		MenuUIRow(PausePage, Box);
 	}
 	{
 		UButton* Btn = nullptr;
@@ -236,7 +236,7 @@ void UStudyMenuWidget::BuildLayout()
 		{
 			Btn->OnClicked.AddDynamic(this, &UStudyMenuWidget::OnQuitClicked);
 		}
-		AddRow(PausePage, Box);
+		MenuUIRow(PausePage, Box);
 	}
 
 	MainPage->SetVisibility(ESlateVisibility::Collapsed);

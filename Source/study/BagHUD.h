@@ -42,6 +42,9 @@ public:
 	/** ESC：开关设置菜单（角色按 ESC 时调这里） */
 	void TogglePauseMenu();
 
+	/** Tab：开关资产排行面板 */
+	void ToggleRank();
+
 	/** 开局如果还没点过「开始游戏」，就弹主菜单 */
 	void ShowMainMenuIfNeeded();
 
@@ -64,6 +67,10 @@ private:
 	/** 主菜单 / ESC 设置菜单（开场和暂停都用它） */
 	UPROPERTY()
 	TObjectPtr<class UStudyMenuWidget> MenuWidget;
+
+	/** Tab 资产排行（按 Tab 才显示） */
+	UPROPERTY()
+	TObjectPtr<class UStudyRankWidget> RankWidget;
 
 	virtual void BeginPlay() override;
 

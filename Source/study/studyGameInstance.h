@@ -13,6 +13,49 @@
  * GameMode / GameState / Pawn 全部会被销毁重建 —— 「第几天、几点、多少钱」如果
  * 存在 GameState 里，一传送就归零了。GameInstance 是整个进程唯一的，所以放这里。
  */
+/**
+ * 一个「模拟对手」的状态。
+ *
+ * 它不是一个真的 AI 角色 —— 没有寻路、没有模型，只是一套跟着游戏时钟跑的小状态机。
+ * 这样排行榜上会有人跟你抢，但不用为寻路/AI 控制器再花两天。
+ */
+USTRUCT(BlueprintType)
+struct FRivalState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	FString Name;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 Cash = 0;
+
+	/** 挖出来还没卖的黄金（囤货） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	float StashGrams = 0.f;
+
+	/** 今天已经用掉几次开采权（和玩家一样，上限 3 次） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 RightsToday = 0;
+
+	/** 下一次行动的时钟（秒，RivalClock 的绝对值）。到点才动 */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	float NextActionAt = 0.f;
+
+	/** 性格：0 = 稳（等正规买家 100%），1 = 赌（立刻卖黑市 65%），2 = 囤（攒够再卖） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 Style = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 TripsDone = 0;
+
+	/** 资产口径：现金 + 囤着的金按正规价折算（和玩家同一把尺子） */
+	int32 GetAssetTotal() const
+	{
+		return Cash + FMath::RoundToInt(StashGrams * 1000.f);
+	}
+};
+
 UCLASS()
 class STUDY_API UstudyGameInstance : public UGameInstance
 {
@@ -89,6 +132,35 @@ public:
 	/** 头灯亮度倍数：1 = 默认亮度（HeadLightIntensity） */
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	float HeadLightScale = 1.f;
+
+	// ---------------- 模拟对手（AI 矿工） ----------------
+
+	UPROPERTY(BlueprintReadOnly, Category = "Rivals")
+	TArray<FRivalState> Rivals;
+
+	/** 对手自己的时钟（秒）。只在这局开始后走 */
+	UPROPERTY(BlueprintReadOnly, Category = "Rivals")
+	float RivalClock = 0.f;
+
+	/** 上一次同步的开采次数是哪一天（换天时把 RightsToday 清零） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rivals")
+	int32 RivalLastDay = 1;
+
+	/**
+	 * 黑市价乘数。任何人（玩家或对手）向黑市大量抛售都会把它砸下来，
+	 * 然后随时间慢慢恢复。1.0 = 原价。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Market")
+	float BlackMarketMultiplier = 1.f;
+
+	/** 新建三个对手，并给它们不同的出发时间（不会同时动） */
+	void InitRivals();
+
+	/** 每帧推进：换天重置、黑市价恢复、到点让对手行动。由 GameMode 调 */
+	void TickRivals(float DeltaSeconds);
+
+	/** 抛售 Grams 克：把黑市价砸下去一点（有地板） */
+	void ApplyBlackMarketDump(float Grams);
 
 	// ---------------- 常量 ----------------
 

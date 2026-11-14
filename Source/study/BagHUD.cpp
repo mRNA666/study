@@ -4,6 +4,7 @@
 #include "BagHUD.h"
 #include "StudyHUDWidget.h"
 #include "StudyMenuWidget.h"
+#include "StudyRankWidget.h"
 #include "studyGameInstance.h"
 #include "studyCharacter.h"
 #include "DropItem.h"
@@ -58,6 +59,16 @@ void ABagHUD::BeginPlay()
 		else
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[HUD] 菜单控件创建失败"));
+		}
+	}
+
+	// Tab 资产排行（ZOrder 15：在 HUD 之上、菜单之下）
+	if (PlayerOwner && !RankWidget)
+	{
+		RankWidget = CreateWidget<UStudyRankWidget>(PlayerOwner, UStudyRankWidget::StaticClass());
+		if (RankWidget)
+		{
+			RankWidget->AddToViewport(15);
 		}
 	}
 }
@@ -740,5 +751,19 @@ void ABagHUD::DrawUnloadZones()
 
 		DrawText(Label, ZoneTextColor,
 			BX, BY, nullptr, LabelScale, /*bScalePosition*/ false);
+	}
+}
+
+void ABagHUD::ToggleRank()
+{
+	// 暂停菜单开着的时候不响应 Tab，免得两个面板叠在一起
+	if (MenuWidget && MenuWidget->IsMenuOpen())
+	{
+		return;
+	}
+
+	if (RankWidget)
+	{
+		RankWidget->Toggle();
 	}
 }
