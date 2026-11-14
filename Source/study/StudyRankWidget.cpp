@@ -169,7 +169,8 @@ void UStudyRankWidget::Refresh()
 	{
 		FEntry E;
 		E.Name = R.Name;
-		E.Asset = R.GetAssetTotal();
+		// 现金 + 囤着的金 + 手上压着的工艺品（按真实金重算，和正规买家给的钱一致）
+		E.Asset = R.GetAssetTotal() + UstudyGameInstance::SumCraftValue(R.Handicraft);
 		List.Add(E);
 	}
 
@@ -201,8 +202,10 @@ void UStudyRankWidget::Refresh()
 
 	if (MarketText)
 	{
+		// 和黑商对话框里那行必须一模一样：当天基础价 x 抛售乘数
+		const float EffectiveRate = GI->BlackMarketDailyRate * GI->BlackMarketMultiplier;
 		MarketText->SetText(FText::FromString(FString::Printf(
-			TEXT("黑市价：正规价的 %.0f%%（有人抛售会被砸下来，之后慢慢恢复）"),
-			GI->BlackMarketMultiplier * 100.f)));
+			TEXT("黑市价：正规价的 %.0f%%（今天基础 %.0f%%，有人抛售还会被砸下来）"),
+			EffectiveRate * 100.f, GI->BlackMarketDailyRate * 100.f)));
 	}
 }

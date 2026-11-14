@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -54,8 +54,16 @@ protected:
 
 	void ChooseOption(int32 Index);
 
-	/** 打开/关闭对话时切换输入模式（鼠标 + 锁移动） */
-	void SetDialogInputMode(bool bDialogOpen);
+	/**
+	 * 【唯一的输入总闸】每帧按当前 UI 状态，把 PlayerController 上的输入锁按"绝对量"写一遍。
+	 *
+	 * 为什么必须绝对量：引擎里 SetIgnoreMoveInput(false) 不是清零，是"把锁计数减 1"
+	 * （AController::SetIgnoreMoveInput：IgnoreMoveInput = Max(IgnoreMoveInput ± 1, 0)，
+	 * 见 Controller.cpp:171）。只要有一路"加了没减"——比如对话里直接开了货架面板，
+	 * 对话那次 −1 被跳过——计数就永久停在 1，界面全关了人还是走不动、转不了视角。
+	 * 所以这里每帧先 Reset 成 0，再按当前状态决定要不要重新加 1，任何人都算错不了。
+	 */
+	void SyncInputMode(bool bLoading);
 
 	AstudyCharacter* GetStudyCharacter() const;
 	AstudyGameState* GetStudyState() const;
@@ -74,6 +82,9 @@ protected:
 
 	UPROPERTY() TObjectPtr<UTextBlock> HintText;
 	UPROPERTY() TObjectPtr<UTextBlock> NoticeText;
+
+	/** 数字输入行后面的单位标签（g / %） */
+	UPROPERTY() TObjectPtr<UTextBlock> NumberUnitText;
 
 	UPROPERTY() TObjectPtr<UBorder> SettlementBorder;
 	UPROPERTY() TObjectPtr<UTextBlock> SettlementCashText;
@@ -106,4 +117,13 @@ protected:
 
 	/** 上一帧对话是不是开着（用来检测状态变化） */
 	bool bWasDialogOpen = false;
+
+	/** 上一帧是不是"该显示鼠标"（只在翻转的那一帧才 SetInputMode，免得每帧打断控件焦点） */
+	bool bLastInputModal = false;
+
+	/** 上一帧移动锁是不是关着（只在翻转的那一帧打日志） */
+	bool bLastLockMove = false;
+
+	/** 上一帧输入框的单位（g / %），变了才改文字 */
+	FString LastNumberUnit;
 };

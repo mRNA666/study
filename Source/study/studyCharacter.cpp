@@ -345,6 +345,9 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 
 		// Tab：资产排行（按住看，再按一下关）
 		PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AstudyCharacter::OnRankPressed);
+
+		// B：工艺品背包
+		PlayerInputComponent->BindKey(EKeys::B, IE_Pressed, this, &AstudyCharacter::OnBagPressed);
 	}
 }
 
@@ -465,6 +468,104 @@ void AstudyCharacter::DialogChoose(int32 Index)
 	}
 }
 
+void AstudyCharacter::StudyTestShelf(int32 Count)
+{
+	Count = FMath::Clamp(Count, 1, 20000);
+
+	double TotalCost = 0.0;
+	double TotalReal = 0.0;
+	int32 ProfitableShelves = 0;
+	float MinRatio = 1.e9f;
+	float MaxRatio = -1.e9f;
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		TArray<FShelfSlot> TestShelf;
+		UstudyGameInstance::GenerateShelf(1 + (i % 12), 100000 + i, TestShelf);
+
+		double Cost = 0.0;
+		double Real = 0.0;
+		for (const FShelfSlot& S : TestShelf)
+		{
+			Cost += S.Item.Price;
+			Real += UstudyGameInstance::GetRealValue(S.Item);
+		}
+
+		if (Cost <= 0.0)
+		{
+			continue;
+		}
+
+		TotalCost += Cost;
+		TotalReal += Real;
+
+		const float Ratio = static_cast<float>(Real / Cost);
+		MinRatio = FMath::Min(MinRatio, Ratio);
+		MaxRatio = FMath::Max(MaxRatio, Ratio);
+		if (Ratio > 1.0f)
+		{
+			++ProfitableShelves;
+		}
+	}
+
+	const double AvgRatio = (TotalCost > 0.0) ? (TotalReal / TotalCost) : 0.0;
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[ShelfTest] %d 张货架 | 平均变现/成本 = %.3f（平均亏 %.1f%%）| 最低 %.3f | 最高 %.3f | 能赚钱的张数 = %d"),
+		Count, AvgRatio, (1.0 - AvgRatio) * 100.0, MinRatio, MaxRatio, ProfitableShelves);
+}
+
+bool AstudyCharacter::IsHandicraftPanelOpen() const
+{
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (const ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+		{
+			return HUD->IsHandicraftPanelOpen();
+		}
+	}
+	return false;
+}
+
+void AstudyCharacter::StudyInputState()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Input] 没有 PlayerController，角色还没被 Possess"));
+		return;
+	}
+
+	bool bPanel = false;
+	bool bMenu = false;
+	if (const ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+	{
+		bPanel = HUD->IsHandicraftPanelOpen();
+		bMenu = HUD->IsMenuOpen();
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[Input] 锁移动=%d 锁视角=%d 鼠标=%d | 货架/背包=%d 菜单=%d 对话=%d 屏蔽动作=%d"),
+		PC->IsMoveInputIgnored() ? 1 : 0,
+		PC->IsLookInputIgnored() ? 1 : 0,
+		PC->bShowMouseCursor ? 1 : 0,
+		bPanel ? 1 : 0,
+		bMenu ? 1 : 0,
+		IsDialogOpen() ? 1 : 0,
+		bGameplayInputBlocked ? 1 : 0);
+}
+
+void AstudyCharacter::OnBagPressed()
+{
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+		{
+			HUD->ToggleBag();
+		}
+	}
+}
+
 void AstudyCharacter::OnRankPressed()
 {
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -485,12 +586,15 @@ void AstudyCharacter::OnEscapePressed()
 		return;
 	}
 
-	// 没对话时：开关 ESC 设置菜单
+	// 没对话时：先关掉货架/背包面板，再开关 ESC 设置菜单
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
 		if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
 		{
-			HUD->TogglePauseMenu();
+			if (!HUD->CloseHandicraftPanels())
+			{
+				HUD->TogglePauseMenu();
+			}
 		}
 	}
 }
@@ -520,6 +624,12 @@ void AstudyCharacter::ToggleHeadLight()
 
 void AstudyCharacter::OnPickupPressed()
 {
+	// 面板/加载/结算期间 E 不响应（否则会和面板叠在一起）
+	if (IsGameplayInputBlocked())
+	{
+		return;
+	}
+
 	// ① 对话开着的时候，E 只是关掉对话
 	if (IsDialogOpen())
 	{
@@ -663,6 +773,11 @@ void AstudyCharacter::DoMove(float Right, float Forward)
 
 void AstudyCharacter::DoJumpStart()
 {
+	if (IsGameplayInputBlocked())
+	{
+		return;
+	}
+
 	// pass Jump to the character
 	Jump();
 }
@@ -674,6 +789,11 @@ void AstudyCharacter::DoJumpEnd()
 }
 void AstudyCharacter::DoDig()
 {
+	if (IsGameplayInputBlocked())
+	{
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{

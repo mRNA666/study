@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "StudyHUDWidget.h"
@@ -8,6 +8,7 @@
 #include "Merchant.h"
 #include "MineGenerator.h"
 #include "DropItem.h"
+#include "BagHUD.h"
 #include "StudySounds.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
@@ -249,8 +250,8 @@ void UStudyHUDWidget::BuildLayout()
 			}
 		}
 
-		NumberRow->AddChildToHorizontalBox(
-			MakeText(WidgetTree, TEXT("g"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true));
+		NumberUnitText = MakeText(WidgetTree, TEXT("g"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true);
+		NumberRow->AddChildToHorizontalBox(NumberUnitText);
 
 		NumberSubmitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
 		NumberSubmitButton->AddChild(
@@ -331,21 +332,21 @@ void UStudyHUDWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 关键：每进一个新关卡都先把输入模式复位。
-	// SetInputMode / SetIgnoreMoveInput / SetIgnoreLookInput 是挂在 PlayerController 上的，
-	// 切关卡不会自动清掉 —— 上次对话开着时传送到矿洞，就会把 GameAndUI + 锁视角带过去，
-	// 表现为"鼠标一直露着、必须按住左键才能转视角"。
-	SetDialogInputMode(false);
-	SetLoadingState(false);		// 万一是从"加载中被切走"的场景回来，先把输入还回去
+	// 关键：每进一个新关卡都先把输入状态复位。
+	// SetInputMode / SetIgnoreMoveInput / SetIgnoreLookInput 挂在 PlayerController 上，
+	// 切关卡不会自动清掉 —— 上次对话/面板开着时切走，就会把 GameAndUI + 锁移动带过去。
+	bLastInputModal = false;
 	bWasDialogOpen = false;
 	bWasLoading = false;
+	SetLoadingState(false);		// 万一是从"加载中被切走"的场景回来，先把遮罩收掉
+	SyncInputMode(false);		// 输入锁按当前状态重算一遍（绝对量，不会累积）
 }
 
 void UStudyHUDWidget::NativeDestruct()
 {
 	// Widget 被销毁（关卡切换 / 结束播放）时也要把输入还回去
-	SetDialogInputMode(false);
 	SetLoadingState(false);
+	SyncInputMode(false);
 	Super::NativeDestruct();
 }
 
@@ -572,11 +573,22 @@ void UStudyHUDWidget::Refresh()
 	// ---- 对话框 ----
 	const bool bDialogOpen = Character->IsDialogOpen();
 
-	if (bDialogOpen != bWasDialogOpen)
+	// 数字输入行的单位：卖金是 g，卖工艺品是 %。
+	// 这里必须每帧比对字符串 —— 因为"选项页 → 数字页"是在同一个对话里切换的
+	// （没有关闭再打开），只靠"对话框刚打开"那一下判断，单位会一直是上一次的 g。
+	if (NumberUnitText)
 	{
-		SetDialogInputMode(bDialogOpen);
-		bWasDialogOpen = bDialogOpen;
+		const FString Unit = Character->GetDialogNumberUnit();
+		if (!Unit.Equals(LastNumberUnit))
+		{
+			LastNumberUnit = Unit;
+			NumberUnitText->SetText(FText::FromString(Unit));
+		}
 	}
+
+	bWasDialogOpen = bDialogOpen;
+
+	// 输入模式/输入锁的切换统一由 SyncInputMode 每帧算一遍，这里不再单独处理
 
 	if (DialogBorder)
 	{
@@ -616,6 +628,9 @@ void UStudyHUDWidget::Refresh()
 			}
 		}
 	}
+
+	// 最后一步：按"现在到底开着什么界面"把输入状态重算一遍（绝对量写回，永远自愈）
+	SyncInputMode(bWasLoading);
 }
 
 // ---------------- 交互 ----------------
@@ -660,34 +675,12 @@ void UStudyHUDWidget::SetLoadingState(bool bLoading)
 		LoadingBorder->SetVisibility(bLoading ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
-	APlayerController* PC = GetOwningPlayer();
-	if (!PC)
-	{
-		return;
-	}
-
-	// 加载期间玩家既不能动、也不能挖/捡/交互
-	APawn* Pawn = PC->GetPawn();
-
-	if (bLoading)
-	{
-		PC->DisableInput(PC);
-		if (Pawn)
-		{
-			Pawn->DisableInput(PC);
-		}
-	}
-	else
-	{
-		PC->EnableInput(PC);
-		if (Pawn)
-		{
-			Pawn->EnableInput(PC);
-		}
-	}
+	// 加载期间"不许动/不许挖不许捡"现在由 SyncInputMode 每帧算（Reset + SetIgnore* / 动作屏蔽），
+	// 不再用 DisableInput / EnableInput —— 那两个是往输入组件"栈"里 Push/Pop，
+	// 和其它地方交叉调用会把栈搞乱，典型症状就是界面关了却永远收不到输入。
 }
 
-void UStudyHUDWidget::SetDialogInputMode(bool bDialogOpen)
+void UStudyHUDWidget::SyncInputMode(bool bLoading)
 {
 	APlayerController* PC = GetOwningPlayer();
 	if (!PC)
@@ -695,24 +688,70 @@ void UStudyHUDWidget::SetDialogInputMode(bool bDialogOpen)
 		return;
 	}
 
-	if (bDialogOpen)
+	AstudyCharacter* Character = GetStudyCharacter();
+	AstudyGameState* GS = GetStudyState();
+
+	// 会拦住玩家的六种情况：对话 / 货架 / 工艺品背包 / 暂停菜单 / 加载 / 对局结算
+	bool bPanelOpen = false;
+	bool bMenuOpen = false;
+	if (ABagHUD* BagHud = Cast<ABagHUD>(PC->GetHUD()))
 	{
-		PC->SetShowMouseCursor(true);
+		bPanelOpen = BagHud->IsHandicraftPanelOpen();
+		bMenuOpen = BagHud->IsMenuOpen();
+	}
 
-		FInputModeGameAndUI Mode;
-		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		Mode.SetHideCursorDuringCapture(false);
-		PC->SetInputMode(Mode);
+	const bool bDialogOpen = (Character && Character->IsDialogOpen());
+	const bool bMatchOver = (GS && GS->GetPhase() == EGamePhase::Finished);
 
-		// 弹窗期间不许移动 / 转视角
+	// 面板/对话/菜单：要鼠标、锁移动；加载/结算：只锁移动，不弹鼠标（黑屏和结算面板不需要点）
+	const bool bBlockActions = bLoading || bMatchOver || bPanelOpen || bMenuOpen;
+	const bool bLockMove = bBlockActions || bDialogOpen;
+	const bool bShowCursor = bDialogOpen || bPanelOpen || bMenuOpen;
+
+	// ---- ① 移动 / 视角：每帧先清零，再按当前状态加锁 ----
+	// 绝对量写回，所以任何一方漏了配对都不会把玩家永久锁死。
+	PC->ResetIgnoreMoveInput();
+	PC->ResetIgnoreLookInput();
+	if (bLockMove)
+	{
 		PC->SetIgnoreMoveInput(true);
 		PC->SetIgnoreLookInput(true);
 	}
-	else
+
+	// 只在"锁"翻转的那一帧打日志：以后谁再把这个锁搞住，日志里一眼能看到是哪个界面干的
+	if (bLockMove != bLastLockMove)
 	{
-		PC->SetShowMouseCursor(false);
-		PC->SetInputMode(FInputModeGameOnly());
-		PC->SetIgnoreMoveInput(false);
-		PC->SetIgnoreLookInput(false);
+		bLastLockMove = bLockMove;
+		UE_LOG(LogTemp, Log,
+			TEXT("[Input] 移动锁 %s   （货架/背包=%d 菜单=%d 对话=%d 加载=%d 结算=%d）"),
+			bLockMove ? TEXT("开") : TEXT("关"),
+			bPanelOpen ? 1 : 0, bMenuOpen ? 1 : 0, bDialogOpen ? 1 : 0,
+			bLoading ? 1 : 0, bMatchOver ? 1 : 0);
+	}
+
+	// ---- ② 鼠标 / 输入模式：只在状态翻转的那一帧改，避免每帧 SetInputMode 打掉控件焦点 ----
+	if (bShowCursor != bLastInputModal)
+	{
+		PC->SetShowMouseCursor(bShowCursor);
+
+		if (bShowCursor)
+		{
+			FInputModeGameAndUI Mode;
+			Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			Mode.SetHideCursorDuringCapture(false);
+			PC->SetInputMode(Mode);
+		}
+		else
+		{
+			PC->SetInputMode(FInputModeGameOnly());
+		}
+
+		bLastInputModal = bShowCursor;
+	}
+
+	// ---- ③ 动作级屏蔽：E / 跳跃 / 挖掘（这三条不吃 IgnoreMoveInput，只能在角色里挡）----
+	if (Character)
+	{
+		Character->SetGameplayInputBlocked(bBlockActions);
 	}
 }

@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -165,13 +165,37 @@ protected:
 	/** ESC：有对话框就取消对话，没有就开关设置菜单 */
 	void OnEscapePressed();
 
+	/** 控制台命令：StudyTestShelf 1000 —— 打 1000 张货架，验证"全买必亏" */
+	UFUNCTION(Exec)
+	void StudyTestShelf(int32 Count = 1000);
+
 	/** Tab：开关资产排行面板 */
 	void OnRankPressed();
+
+	/** B：开关工艺品背包 */
+	void OnBagPressed();
+
+	/** 货架/背包面板是不是开着（诊断用） */
+	bool IsHandicraftPanelOpen() const;
+
+	/** 控制台输入 StudyInputState：打印当前输入锁状态，排查"走不动"用 */
+	UFUNCTION(Exec)
+	void StudyInputState();
 
 public:
 	/** 设置头灯亮度倍数（1 = 默认）。ESC 菜单里的滑块调这个 */
 	UFUNCTION(BlueprintCallable, Category = "HeadLight")
 	void SetHeadLightScale(float Scale);
+
+	/**
+	 * HUD 每帧调用：面板 / 对话 / 暂停菜单 / 加载 / 结算 期间把 E、跳跃、挖掘挡掉。
+	 * 移动和视角不在这里管 —— 那两个是 PlayerController 的 IgnoreMove/Look 锁。
+	 */
+	void SetGameplayInputBlocked(bool bBlocked) { bGameplayInputBlocked = bBlocked; }
+	bool IsGameplayInputBlocked() const { return bGameplayInputBlocked; }
+
+	/** HUD 每帧写：面板/对话/菜单/加载/结算期间禁止 E / 跳 / 挖 */
+	bool bGameplayInputBlocked = false;
 
 	// ---------------- 黑屏过渡（睡觉 / 传送回营地） ----------------
 
@@ -310,6 +334,12 @@ public:
 
 	/** 商人调用：弹一个"输入数字"对话框 */
 	void OpenNumberDialog(const FString& Title, const FString& Body, const FString& Prompt, float MaxValue);
+
+	/** 数字输入行显示的单位（卖金 g / 卖工艺品 %） */
+	FString DialogNumberUnit = TEXT("g");
+
+	void SetDialogNumberUnit(const FString& InUnit) { DialogNumberUnit = InUnit; }
+	FString GetDialogNumberUnit() const { return DialogNumberUnit; }
 
 	/** 关闭对话 */
 	void CloseDialog();

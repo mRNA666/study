@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Merchant.h"
@@ -7,6 +7,7 @@
 #include "studyGameState.h"
 #include "studyGameMode.h"
 #include "StudySounds.h"
+#include "BagHUD.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
@@ -124,6 +125,31 @@ bool AMerchant::Interact(AstudyCharacter* Character)
 
 // ---------------- 对话内容 ----------------
 
+namespace
+{
+	/** 含金量 -> 听泉鉴宝的评语 */
+	FString AppraiseLine(float Purity)
+	{
+		if (Purity >= 0.85f) { return TEXT("这个东西很开门啊！"); }
+		if (Purity >= 0.60f) { return TEXT("这个东西不错。"); }
+		if (Purity >= 0.40f) { return TEXT("这个东西一般般。"); }
+		return TEXT("这个啥呀，就一破烂。");
+	}
+
+	/** 背包里还没鉴定过的下标（最多 3 个，按背包顺序） */
+	void CollectUnappraised(const TArray<FHandicraftItem>& Bag, TArray<int32>& Out)
+	{
+		Out.Reset();
+		for (int32 i = 0; i < Bag.Num() && Out.Num() < 3; ++i)
+		{
+			if (!Bag[i].bAppraised)
+			{
+				Out.Add(i);
+			}
+		}
+	}
+}
+
 void AMerchant::BuildDialog(AstudyCharacter* Character)
 {
 	UstudyGameInstance* GI = GetRun(this);
@@ -137,6 +163,64 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	// 然后才回调 OnDialogOption → 里面可能又调 BuildDialog 重刷对话框。
 	// 不重新认领的话，重刷出来的对话框是"没有主人"的，之后点任何选项都没反应。
 	Character->SetDialogMerchant(this);
+
+	// 工艺品卖货列表（自己一套选项，不和其他商人的菜单混）
+	if (CraftFlow != 0)
+	{
+		BuildCraftSellList(Character, CraftFlow == 2);
+		return;
+	}
+
+	// ---- 听泉鉴宝 ----
+	if (Kind == EMerchantKind::Appraiser)
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		const int32 FEE = 500;
+
+		if (GI->HandicraftBag.Num() == 0)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("你去买点好玩意儿回来再找我。"),
+				{ TEXT("离开") });
+			return;
+		}
+
+		TArray<int32> Candidates;
+		CollectUnappraised(GI->HandicraftBag, Candidates);
+
+		if (Candidates.Num() == 0)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("你这些我都看过了，我没什么可说的。"),
+				{ TEXT("离开") });
+			return;
+		}
+
+		if (GI->Cash < FEE)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				FString::Printf(TEXT("看一件 %d 币。你口袋里只有 %d 币，先去挣够钱再来。"), FEE, GI->Cash),
+				{ TEXT("离开") });
+			return;
+		}
+
+		FString DlgBody = FString::Printf(TEXT("拿一件给我瞧瞧。看一件 %d 币。\n\n"), FEE);
+		TArray<FString> Options;
+		for (int32 n = 0; n < Candidates.Num(); ++n)
+		{
+			const FHandicraftItem& It = GI->HandicraftBag[Candidates[n]];
+			DlgBody += FString::Printf(TEXT("%d. %s   标称 %.0f g   黑商报 %.0f%%\n"),
+				n + 1, *UstudyGameInstance::GetCategoryName(It.Category), It.NominalGrams,
+				It.DeclaredPurity * 100.f);
+			Options.Add(FString::Printf(TEXT("鉴：%s（%.0f g，报 %.0f%%）"),
+				*UstudyGameInstance::GetCategoryName(It.Category), It.NominalGrams,
+				It.DeclaredPurity * 100.f));
+		}
+		Options.Add(TEXT("离开"));
+		Character->OpenOptionDialog(DisplayName, DlgBody, Options);
+		return;
+	}
 
 	// ---- 床：睡到下一天（晚上才用，所以不参与"太晚了"封锁） ----
 	if (Kind == EMerchantKind::Bed)
@@ -178,10 +262,12 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		const float Sellable = FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams);
 		const int32 Estimate = FMath::RoundToInt(Sellable * static_cast<float>(AstudyGameState::BasePricePerGram));
 
+		Character->SetDialogNumberUnit(TEXT("g"));
 		Character->SetDialogNumberEnabled(Sellable);
 
 		TArray<FString> Options;
 		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → %d 币，全额）"), Sellable, Estimate));
+		Options.Add(TEXT("卖工艺品"));
 		Options.Add(TEXT("算了"));
 
 		Character->OpenOptionDialog(
@@ -215,15 +301,18 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
-		const float EffectiveRate = AstudyGameState::BlackMarketRate * GI->BlackMarketMultiplier;
+		const float EffectiveRate = GI->BlackMarketDailyRate * GI->BlackMarketMultiplier;
 		const int32 Estimate = FMath::RoundToInt(
 			GI->GoldGrams * EffectiveRate * static_cast<float>(AstudyGameState::BasePricePerGram));
 
 		// 打开行内数字输入（框里填"卖多少克"）
+		Character->SetDialogNumberUnit(TEXT("g"));
 		Character->SetDialogNumberEnabled(GI->GoldGrams);
 
 		TArray<FString> Options;
 		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → 约 %d 币）"), GI->GoldGrams, Estimate));
+		Options.Add(TEXT("购买工艺品（看看柜台）"));
+		Options.Add(TEXT("卖工艺品"));
 		Options.Add(TEXT("算了"));
 
 		Character->OpenOptionDialog(
@@ -273,7 +362,50 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		return;
 	}
 
+	if (CraftFlow != 0)
+	{
+		HandleCraftSellOption(Character, Index);
+		return;
+	}
+
 	// ---- 床 ----
+	// ---- 听泉鉴宝 ----
+	if (Kind == EMerchantKind::Appraiser)
+	{
+		const int32 FEE = 500;
+
+		TArray<int32> Candidates;
+		CollectUnappraised(GI->HandicraftBag, Candidates);
+
+		if (Index < 0 || Index >= Candidates.Num())
+		{
+			Character->CloseDialog();
+			return;
+		}
+
+		if (GI->Cash < FEE)
+		{
+			Character->CloseDialog();
+			return;
+		}
+
+		FHandicraftItem& It = GI->HandicraftBag[Candidates[Index]];
+		GI->Cash -= FEE;
+		It.bAppraised = true;
+
+		UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.8f);
+
+		const FString Verdict = FString::Printf(
+			TEXT("（他把东西翻来覆去看了半天，又掂了掂）\n\n「%s」\n\n真实含金量：%.0f%%"),
+			*AppraiseLine(It.RealPurity), It.RealPurity * 100.f);
+
+		UE_LOG(LogTemp, Log, TEXT("[Appraise] %s 真实含金量 %.1f%%（收了 %d 币）"),
+			*UstudyGameInstance::GetCategoryName(It.Category), It.RealPurity * 100.f, FEE);
+
+		Character->OpenOptionDialog(DisplayName, Verdict, { TEXT("知道了") });
+		return;
+	}
+
 	if (Kind == EMerchantKind::Bed)
 	{
 		if (Index == 0)
@@ -314,6 +446,12 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	// ---- 正规买家 ----
 	if (Kind == EMerchantKind::LegitBuyer)
 	{
+		if (Index == 1)
+		{
+			CraftFlow = 2;
+			BuildDialog(Character);
+			return;
+		}
 		if (Index == 0)
 		{
 			SellGoldLegit(FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams));
@@ -363,6 +501,29 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
+		if (Index == 1)
+		{
+			// 先关对话框（它会把输入模式设回 GameOnly），再开面板
+			Character->CloseDialog();
+			if (APlayerController* PC = Cast<APlayerController>(Character->GetController()))
+			{
+				if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+				{
+					HUD->OpenShelf(this);
+				}
+			}
+			return;
+		}
+		if (Index == 2)
+		{
+			CraftFlow = 1;
+			BuildDialog(Character);
+			return;
+		}
+		if (Index != 0)
+		{
+			return;
+		}
 		if (Index == 0)
 		{
 			SellGold(GI->GoldGrams);
@@ -392,11 +553,198 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	}
 }
 
+
+// ==================== 工艺品交易 ====================
+
+void AMerchant::BuildCraftSellList(AstudyCharacter* Character, bool bToLegit)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	Character->SetDialogMerchant(this);
+	Character->SetDialogNumberEnabled(0.f);
+
+	CraftCandidates.Reset();
+
+	if (GI->HandicraftBag.Num() == 0)
+	{
+		CraftFlow = 0;
+		Character->OpenOptionDialog(DisplayName,
+			TEXT("你身上一件工艺品都没有。"),
+			{ TEXT("知道了") });
+		return;
+	}
+
+	for (int32 i = 0; i < GI->HandicraftBag.Num() && CraftCandidates.Num() < 3; ++i)
+	{
+		CraftCandidates.Add(i);
+	}
+
+	FString CraftBody = bToLegit
+		? TEXT("他戴上眼镜，把东西翻过来看背面。\n「我这儿是要过秤验成色的，报虚的没用。」\n\n")
+		: TEXT("「我这可是会验含量的，你小子不要骗我。」\n\n");
+
+	TArray<FString> Options;
+	for (int32 n = 0; n < CraftCandidates.Num(); ++n)
+	{
+		const FHandicraftItem& It = GI->HandicraftBag[CraftCandidates[n]];
+		CraftBody += FString::Printf(TEXT("%d. %s   标称 %.0f g   %s\n"),
+			n + 1, *UstudyGameInstance::GetCategoryName(It.Category), It.NominalGrams,
+			It.bAppraised
+				? *FString::Printf(TEXT("真实 %.0f%%"), It.RealPurity * 100.f)
+				: *FString::Printf(TEXT("黑商报 %.0f%%"), It.DeclaredPurity * 100.f));
+
+		Options.Add(FString::Printf(TEXT("卖：%s（%.0f g）"),
+			*UstudyGameInstance::GetCategoryName(It.Category), It.NominalGrams));
+	}
+	Options.Add(TEXT("算了"));
+
+	Character->OpenOptionDialog(DisplayName, CraftBody, Options);
+}
+
+void AMerchant::HandleCraftSellOption(AstudyCharacter* Character, int32 Index)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	if (!CraftCandidates.IsValidIndex(Index))
+	{
+		CraftFlow = 0;
+		BuildDialog(Character);
+		return;
+	}
+
+	const int32 BagIndex = CraftCandidates[Index];
+	if (!GI->HandicraftBag.IsValidIndex(BagIndex))
+	{
+		CraftFlow = 0;
+		BuildDialog(Character);
+		return;
+	}
+
+	if (CraftFlow == 2)
+	{
+		SellHandicraftToLegit(Character, BagIndex);
+		return;
+	}
+
+	// 黑市：先让玩家自己报含金量
+	PendingCraftSell = BagIndex;
+	CraftFlow = 0;
+	Character->SetDialogNumberUnit(TEXT("%"));
+
+	const FHandicraftItem& It = GI->HandicraftBag[BagIndex];
+	Character->OpenNumberDialog(
+		DisplayName,
+		FString::Printf(TEXT("%s，标称 %.0f g。\n\n你打算报多少含金量？（0-100）\n%s"),
+			*UstudyGameInstance::GetCategoryName(It.Category), It.NominalGrams,
+			It.bAppraised
+				? *FString::Printf(TEXT("（你鉴定过：真实 %.0f%%）"), It.RealPurity * 100.f)
+				: *FString::Printf(TEXT("（你只有黑商那句：%.0f%%）"), It.DeclaredPurity * 100.f)),
+		TEXT("报个含金量（0-100）"),
+		100.f);
+
+	// 关键：DialogChoose 先 CloseDialog 把 DialogMerchant 清空了，
+	// 这里必须重新认领，否则「确认卖出」时找不到商人，点了没反应。
+	Character->SetDialogMerchant(this);
+}
+
+void AMerchant::SellHandicraftToFence(AstudyCharacter* Character, int32 BagIndex, float Reported01)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character || !GI->HandicraftBag.IsValidIndex(BagIndex))
+	{
+		return;
+	}
+
+	const FHandicraftItem It = GI->HandicraftBag[BagIndex];
+	const float Reported = FMath::Clamp(Reported01, 0.f, 1.f);
+	const float Real = It.RealPurity;
+	const float Lie = FMath::Max(0.f, Reported - Real);
+
+	// 被验概率：好感度越高越信你；虚报越多越容易被看穿
+	float CatchChance = 0.72f - 0.0052f * static_cast<float>(GI->FenceFavor) + Lie * 1.5f;
+	CatchChance = FMath::Clamp(CatchChance, 0.f, 1.f);
+
+	const bool bCaught = FMath::FRand() < CatchChance;
+	const float UsedPurity = bCaught ? Real : Reported;
+
+	const int32 Earned = FMath::RoundToInt(
+		It.NominalGrams * UsedPurity * 1000.f * GI->BlackMarketDailyRate * 0.95f);
+
+	GI->Cash += Earned;
+	GI->HandicraftBag.RemoveAt(BagIndex);
+
+	FString Verdict;
+	if (bCaught)
+	{
+		GI->FenceFavor = FMath::Max(0, GI->FenceFavor - 15);
+		Verdict = FString::Printf(
+			TEXT("「你小子拿这玩意儿糊弄我？」\n\n他当场砸开看了一眼。\n真实含金量 %.0f%%，按这个给你 %d 币。\n（好感度 -15）"),
+			Real * 100.f, Earned);
+	}
+	else
+	{
+		Verdict = FString::Printf(TEXT("「行，收下了。」\n\n按 %.0f%% 算，给你 %d 币。"), Reported * 100.f, Earned);
+	}
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
+	UE_LOG(LogTemp, Log, TEXT("[CraftSell] 黑商 真实 %.0f%% 报 %.0f%% → %s，%d 币（好感 %d）"),
+		Real * 100.f, Reported * 100.f, bCaught ? TEXT("识破") : TEXT("蒙混"), Earned, GI->FenceFavor);
+
+	CraftFlow = 0;
+	Character->SetDialogNumberEnabled(0.f);		// 结算完就别再摆着"报多少 %"那一行了
+	Character->OpenOptionDialog(DisplayName, Verdict, { TEXT("知道了") });
+}
+
+void AMerchant::SellHandicraftToLegit(AstudyCharacter* Character, int32 BagIndex)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character || !GI->HandicraftBag.IsValidIndex(BagIndex))
+	{
+		return;
+	}
+
+	const FHandicraftItem It = GI->HandicraftBag[BagIndex];
+	const int32 Earned = FMath::RoundToInt(It.NominalGrams * It.RealPurity * 1000.f);
+
+	GI->Cash += Earned;
+	GI->HandicraftBag.RemoveAt(BagIndex);
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
+	UE_LOG(LogTemp, Log, TEXT("[CraftSell] 正规买家 真实 %.0f%% → %d 币"),
+		It.RealPurity * 100.f, Earned);
+
+	CraftFlow = 0;
+	Character->SetDialogNumberEnabled(0.f);		// 结算完就别再摆着数字输入行了
+	Character->OpenOptionDialog(DisplayName,
+		FString::Printf(TEXT("（他当着你的面过了秤、化了点边角料）\n\n成色 %.0f%%。\n按全价给你 %d 币。"),
+			It.RealPurity * 100.f, Earned),
+		{ TEXT("知道了") });
+}
+
 void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
 {
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI)
 	{
+		return;
+	}
+
+	// 工艺品报价（0-100）
+	if (PendingCraftSell >= 0)
+	{
+		const int32 BagIndex = PendingCraftSell;
+		PendingCraftSell = -1;
+		SellHandicraftToFence(Character, BagIndex, Value / 100.f);
 		return;
 	}
 
@@ -437,12 +785,15 @@ void AMerchant::SellGold(float Grams)
 		return;
 	}
 
-	const float EffectiveRate = AstudyGameState::BlackMarketRate * GI->BlackMarketMultiplier;
+	const float EffectiveRate = GI->BlackMarketDailyRate * GI->BlackMarketMultiplier;
 	const int32 Earned = FMath::RoundToInt(
 		Sold * EffectiveRate * static_cast<float>(AstudyGameState::BasePricePerGram));
 
 	GI->GoldGrams -= Sold;
 	GI->Cash += Earned;
+
+	// 好感度：每卖给他 5 g 黄金 +1（上限 100）；被识破一次 -15 见 DESIGN-shelf §7
+	GI->FenceFavor = FMath::Clamp(GI->FenceFavor + FMath::FloorToInt(Sold / 5.f), 0, 100);
 
 	// 抛售砸价：卖得越多，黑市价掉得越多（对手也会砸，所以这是真竞争）
 	GI->ApplyBlackMarketDump(Sold);

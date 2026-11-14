@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -14,10 +14,79 @@
  * 存在 GameState 里，一传送就归零了。GameInstance 是整个进程唯一的，所以放这里。
  */
 /**
+ * 8 个工艺品品类（用现有 8 个模型命名）
+ */
+enum class EHandicraftCategory : uint8
+{
+	GoldLock = 0,	// 金锁
+	GoldMask,		// 金面具
+	GoldEgg,		// 金蛋
+	GoldToad,		// 金蟾
+	GoldGoblet,		// 金杯
+	GoldShield,		// 金盾
+	GoldLamp,		// 金灯
+	GoldStatue,		// 金像
+	Count
+};
+
+/** 一件工艺品 */
+USTRUCT(BlueprintType)
+struct FHandicraftItem
+{
+	GENERATED_BODY()
+
+	/** 0~7，对应 EHandicraftCategory */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	int32 Category = 0;
+
+	/** 标称金重（g） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	float NominalGrams = 0.f;
+
+	/** 真实含金量 0~1（玩家看不到，除非花 500 鉴定） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	float RealPurity = 0.f;
+
+	/** 黑商报的含金量 0~1（可能吹高） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	float DeclaredPurity = 0.f;
+
+	/** 买入价（币） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	int32 Price = 0;
+
+	/** 是否已经花 500 鉴定过 */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	bool bAppraised = false;
+
+	/** 老板话术 */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	FString SalesPitch;
+};
+
+/** 货架上的一格（含"被谁买走了"） */
+USTRUCT(BlueprintType)
+struct FShelfSlot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	FHandicraftItem Item;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	bool bSold = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	FString BuyerName;
+};
+
+/**
  * 一个「模拟对手」的状态。
  *
  * 它不是一个真的 AI 角色 —— 没有寻路、没有模型，只是一套跟着游戏时钟跑的小状态机。
  * 这样排行榜上会有人跟你抢，但不用为寻路/AI 控制器再花两天。
+ *
+ * 放在 FHandicraftItem 之后：对手也会从黑商柜台买工艺品，得把买到的货存起来。
  */
 USTRUCT(BlueprintType)
 struct FRivalState
@@ -49,7 +118,11 @@ struct FRivalState
 	UPROPERTY(BlueprintReadOnly, Category = "Rival")
 	int32 TripsDone = 0;
 
-	/** 资产口径：现金 + 囤着的金按正规价折算（和玩家同一把尺子） */
+	/** 他手上囤着的工艺品（买了就压着，卖正规买家能拿真实价值） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	TArray<FHandicraftItem> Handicraft;
+
+	/** 资产口径：现金 + 囤着的金按正规价折算（工艺品另算，见 UstudyGameInstance::SumCraftValue） */
 	int32 GetAssetTotal() const
 	{
 		return Cash + FMath::RoundToInt(StashGrams * 1000.f);
@@ -132,6 +205,49 @@ public:
 	/** 头灯亮度倍数：1 = 默认亮度（HeadLightIntensity） */
 	UPROPERTY(BlueprintReadOnly, Category = "UI")
 	float HeadLightScale = 1.f;
+
+	// ---------------- 工艺品 ----------------
+
+	/** 当天的 8 件货 */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	TArray<FShelfSlot> Shelf;
+
+	/** 货架属于第几天（!= DayIndex 就重刷） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	int32 ShelfDay = 0;
+
+	/** 玩家买下的工艺品（按 B 看） */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	TArray<FHandicraftItem> HandicraftBag;
+
+	/**
+	 * 黑市每天的基础收购价（0.55~0.75 每天刷新）。
+	 * 实际单价 = 1000 x 这个值 x BlackMarketMultiplier（抛售砸价的那个乘数）。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Market")
+	float BlackMarketDailyRate = 0.65f;
+
+	/** 黑商好感度 0~100：每卖给他 5 g 黄金 +1，被识破 -15 */
+	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
+	int32 FenceFavor = 50;
+
+	/** 换天/首次进入时刷货架（ShelfDay == DayIndex 时直接返回） */
+	void RefillShelfIfNeeded();
+
+	/** 品类名（日志/UI 用） */
+	static FString GetCategoryName(int32 Category);
+
+	/**
+	 * 生成一张货架（纯函数，不依赖世界；测试走同一个入口）。
+	 * MarketRate = 当天黑市基础价 —— 货架的卖价是按它算的，所以必须先定金价、再刷货架。
+	 */
+	static void GenerateShelf(int32 InDay, int32 Seed, TArray<FShelfSlot>& OutShelf, float MarketRate = 0.65f);
+
+	/** 一件货的真实可变现（按正规全价算） */
+	static int32 GetRealValue(const FHandicraftItem& Item);
+
+	/** 一堆工艺品的真实价值合计（对手资产、背包估值用） */
+	static int32 SumCraftValue(const TArray<FHandicraftItem>& Items);
 
 	// ---------------- 模拟对手（AI 矿工） ----------------
 

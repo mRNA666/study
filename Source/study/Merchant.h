@@ -26,7 +26,10 @@ enum class EMerchantKind : uint8
 	Bed UMETA(DisplayName = "床"),
 
 	/** 正规买家：第二天白天来，全额收，每天有配额 */
-	LegitBuyer UMETA(DisplayName = "正规买家")
+	LegitBuyer UMETA(DisplayName = "正规买家"),
+
+	/** 听泉鉴宝：花 500 鉴定一件工艺品的真实含金量 */
+	Appraiser UMETA(DisplayName = "听泉鉴宝")
 };
 
 /**
@@ -57,6 +60,17 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
 	EMerchantKind Kind = EMerchantKind::BuyMineRight;
+
+	// ---------------- 工艺品交易状态 ----------------
+
+	/** 0 = 正常对话框；1 = 黑市卖货列表；2 = 正规买家卖货列表 */
+	int32 CraftFlow = 0;
+
+	/** 当前卖货列表里的候选（背包下标） */
+	TArray<int32> CraftCandidates;
+
+	/** 正在报价的那一件（背包下标，-1 = 没在报） */
+	int32 PendingCraftSell = -1;
 
 	/** 名字（对话框标题） */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
@@ -103,6 +117,18 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 	/** 把玩家的金重按黑市价卖出指定克数 */
+	/** 列出可卖的工艺品（最多 3 件） */
+	void BuildCraftSellList(AstudyCharacter* Character, bool bToLegit);
+
+	/** 卖货列表里的选项回调 */
+	void HandleCraftSellOption(AstudyCharacter* Character, int32 Index);
+
+	/** 卖给黑商：自己报价，可能被识破 */
+	void SellHandicraftToFence(AstudyCharacter* Character, int32 BagIndex, float Reported01);
+
+	/** 卖给正规买家：必验，按真实含金量全价 */
+	void SellHandicraftToLegit(AstudyCharacter* Character, int32 BagIndex);
+
 	void SellGold(float Grams);
 
 	/** 卖给正规买家：全额，但要吃配额 */

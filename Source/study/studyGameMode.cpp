@@ -388,6 +388,9 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 	// 模拟对手：他们有自己的时钟，和玩家卖不卖金没关系
 	GI->TickRivals(DeltaSeconds);
 
+	// 换天要重刷黑市货架
+	GI->RefillShelfIfNeeded();
+
 	// 昼夜光照（只在营地生效）
 	UpdateDayNightLighting();
 

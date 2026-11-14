@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -45,6 +45,21 @@ public:
 	/** Tab：开关资产排行面板 */
 	void ToggleRank();
 
+	/** 黑商点「购买工艺品」：打开货架面板 */
+	void OpenShelf(class AMerchant* InOwner);
+
+	/** B：开关工艺品背包 */
+	void ToggleBag();
+
+	/** 关掉货架/背包面板（ESC 先关面板）；返回 true 表示确实关掉了什么 */
+	bool CloseHandicraftPanels();
+
+	/** 货架或背包面板是不是开着（HUD 用它决定要不要抢输入模式） */
+	bool IsHandicraftPanelOpen() const;
+
+	/** 暂停/主菜单是不是开着 */
+	bool IsMenuOpen() const;
+
 	/** 开局如果还没点过「开始游戏」，就弹主菜单 */
 	void ShowMainMenuIfNeeded();
 
@@ -71,6 +86,14 @@ private:
 	/** Tab 资产排行（按 Tab 才显示） */
 	UPROPERTY()
 	TObjectPtr<class UStudyRankWidget> RankWidget;
+
+	/** 黑市货架面板 */
+	UPROPERTY()
+	TObjectPtr<class UStudyShelfWidget> ShelfWidget;
+
+	/** 工艺品背包 */
+	UPROPERTY()
+	TObjectPtr<class UStudyBagWidget> BagPanel;
 
 	virtual void BeginPlay() override;
 

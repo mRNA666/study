@@ -1,10 +1,12 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "BagHUD.h"
 #include "StudyHUDWidget.h"
 #include "StudyMenuWidget.h"
 #include "StudyRankWidget.h"
+#include "StudyShelfWidget.h"
+#include "StudyBagWidget.h"
 #include "studyGameInstance.h"
 #include "studyCharacter.h"
 #include "DropItem.h"
@@ -59,6 +61,24 @@ void ABagHUD::BeginPlay()
 		else
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[HUD] 菜单控件创建失败"));
+		}
+	}
+
+	// 黑市货架 + 工艺品背包（ZOrder 25：盖住 HUD 和排行）
+	if (PlayerOwner && !ShelfWidget)
+	{
+		ShelfWidget = CreateWidget<UStudyShelfWidget>(PlayerOwner, UStudyShelfWidget::StaticClass());
+		if (ShelfWidget)
+		{
+			ShelfWidget->AddToViewport(25);
+		}
+	}
+	if (PlayerOwner && !BagPanel)
+	{
+		BagPanel = CreateWidget<UStudyBagWidget>(PlayerOwner, UStudyBagWidget::StaticClass());
+		if (BagPanel)
+		{
+			BagPanel->AddToViewport(26);
 		}
 	}
 
@@ -766,4 +786,51 @@ void ABagHUD::ToggleRank()
 	{
 		RankWidget->Toggle();
 	}
+}
+
+void ABagHUD::OpenShelf(AMerchant* InOwner)
+{
+	if (ShelfWidget)
+	{
+		ShelfWidget->Open(InOwner);
+	}
+}
+
+void ABagHUD::ToggleBag()
+{
+	// 货架开着的时候不许开背包，免得两个面板叠一起
+	if (ShelfWidget && ShelfWidget->IsOpen())
+	{
+		return;
+	}
+	if (BagPanel)
+	{
+		BagPanel->Toggle();
+	}
+}
+
+bool ABagHUD::IsHandicraftPanelOpen() const
+{
+	return (ShelfWidget && ShelfWidget->IsOpen()) || (BagPanel && BagPanel->IsOpen());
+}
+
+bool ABagHUD::IsMenuOpen() const
+{
+	return (MenuWidget && MenuWidget->IsMenuOpen());
+}
+
+bool ABagHUD::CloseHandicraftPanels()
+{
+	bool bClosed = false;
+	if (ShelfWidget && ShelfWidget->IsOpen())
+	{
+		ShelfWidget->ClosePanel();
+		bClosed = true;
+	}
+	if (BagPanel && BagPanel->IsOpen())
+	{
+		BagPanel->CloseBag();
+		bClosed = true;
+	}
+	return bClosed;
 }
