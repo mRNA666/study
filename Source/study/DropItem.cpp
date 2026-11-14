@@ -109,3 +109,20 @@ void ADropItem::InitDrop(float InWeightKg, float InGoldContent, float TargetSize
 		FMath::FRandRange(30.0f, 60.0f));
 	MeshComp->AddImpulse(Impulse, NAME_None, /*bVelChange*/ true);
 }
+
+FString ADropItem::GoldGradeWord(float InGoldContent)
+{
+	if (InGoldContent < 0.001f)
+	{
+		return TEXT("石渣");
+	}
+	if (InGoldContent < 0.03f)
+	{
+		return TEXT("含金：微");
+	}
+	if (InGoldContent < 0.08f)
+	{
+		return TEXT("含金：中");
+	}
+	return TEXT("含金：富");
+}

@@ -20,6 +20,9 @@ void UstudyGameInstance::ResetRun()
 	CampNoticeText.Reset();
 	bRunFinished = false;
 
+	// 重开一局 → 开场主菜单重新弹一次
+	bMainMenuDone = false;
+
 	UE_LOG(LogTemp, Log, TEXT("[Run] 新的一局开始（%d 天）"), TotalDays);
 }
 

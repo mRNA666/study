@@ -159,10 +159,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HeadLight")
 	bool bHeadLightOn = true;
 
-	/** 开关头灯（按 E，且没有别的事情可做时） */
+	/** 开关头灯（按 T，且没有别的事情可做时） */
 	void ToggleHeadLight();
 
+	/** ESC：有对话框就取消对话，没有就开关设置菜单 */
+	void OnEscapePressed();
+
 public:
+	/** 设置头灯亮度倍数（1 = 默认）。ESC 菜单里的滑块调这个 */
+	UFUNCTION(BlueprintCallable, Category = "HeadLight")
+	void SetHeadLightScale(float Scale);
+
 	// ---------------- 黑屏过渡（睡觉 / 传送回营地） ----------------
 
 	/** 弹一段黑屏文字，Seconds 秒后自动消失 */

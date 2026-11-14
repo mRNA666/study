@@ -76,6 +76,20 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	bool bRunStarted = false;
 
+	// ---------------- UI 设置（跨关卡保留） ----------------
+
+	/** 主菜单是否已经点过「开始游戏」。按 R 重开会重置成 false */
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	bool bMainMenuDone = false;
+
+	/** 主音量 0~1（ESC 菜单里拖滑块改） */
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	float MasterVolume = 0.7f;
+
+	/** 头灯亮度倍数：1 = 默认亮度（HeadLightIntensity） */
+	UPROPERTY(BlueprintReadOnly, Category = "UI")
+	float HeadLightScale = 1.f;
+
 	// ---------------- 常量 ----------------
 
 	/** 一天从几点开始（8:00） */

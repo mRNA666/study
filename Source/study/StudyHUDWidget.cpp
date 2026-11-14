@@ -7,6 +7,7 @@
 #include "studyGameInstance.h"
 #include "Merchant.h"
 #include "MineGenerator.h"
+#include "DropItem.h"
 #include "StudySounds.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
@@ -443,9 +444,11 @@ void UStudyHUDWidget::Refresh()
 		{
 			Hint = TEXT("按  E  爬梯");
 		}
-		else if (Character->GetFocusedDrop())
+		else if (const ADropItem* Drop = Character->GetFocusedDrop())
 		{
-			Hint = TEXT("按  E  拾取");
+			// 档位词 + 重量：给「要不要捡」的依据，但不报精确百分比（保住「挖出来才知道」）
+			Hint = FString::Printf(TEXT("按  E  拾取      %.1f kg   %s"),
+				Drop->WeightKg, *ADropItem::GoldGradeWord(Drop->GoldContent));
 		}
 		if (AMerchant* M = Character->GetNearbyMerchant())
 		{

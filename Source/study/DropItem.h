@@ -57,6 +57,18 @@ public:
 	TObjectPtr<UMaterialInterface> RockMaterial;
 
 	/**
+	 * 含金系数 → 档位词（石渣 / 微 / 中 / 富）。
+	 *
+	 * 为什么不直接报百分比：DESIGN-dig §9.6 —— 保住「挖出来才知道」的赌感；
+	 * 报精确数字玩家会去算期望，赌局就变成了算术题。
+	 *
+	 * 阈值按当前分布标定（不是旧的 2%~20%）：
+	 *   石渣：无金    微：1%~3%（约 55%）    中：3%~8%（约 36%）    富：8% 以上（约 10%）
+	 */
+	UFUNCTION(BlueprintPure, Category = "Drop")
+	static FString GoldGradeWord(float InGoldContent);
+
+	/**
 	 * 初始化一块掉落的石头。
 	 * @param InWeightKg      重量（kg）。同时作为物理质量，越重越难被踢飞
 	 * @param InGoldContent   含金系数 0~1

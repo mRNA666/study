@@ -91,17 +91,31 @@ public:
 
 	/** 这一下出「矿石」的概率 0~1。玩家看不见 */
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
-	float OreChance = 0.35f;
+	float OreChance = 0.20f;
 
 	/** 出矿时含金系数的下限 */
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
-	float MinGrade = 0.02f;
+	float MinGrade = 0.01f;
 
 	/** 出矿时含金系数的上限 */
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0", ClampMax = "1"))
-	float MaxGrade = 0.20f;
+	float MaxGrade = 0.10f;
 
-	/** 分布偏斜：>1 = 低含金更多（更赌），<1 = 高含金更多 */
+	/**
+	 * 含金系数的分布形状（幂律）。公式：
+	 *
+	 *   Grade = MinGrade + (MaxGrade - MinGrade) × V^GradeSkew      V = 0~1 均匀随机
+	 *
+	 * 一眼看懂这个数：
+	 *   Skew = 1 → 均匀分布，每档一样多（没有赌感）
+	 *   Skew > 1 → 低含金多、高含金少（现在用 2.5，约 41% 挤在 1~2% 那一档）
+	 *   Skew < 1 → 反过来，高含金更多
+	 *
+	 * 两个可以直接算出来的量：
+	 *   平均值 = Min + (Max-Min) / (Skew+1)      ← 2.5 时 = 3.57%
+	 *   中位数 = Min + (Max-Min) × 0.5^Skew     ← 2.5 时 = 2.59%
+	 * 平均值比中位数高，就是「赌」的数学表现：多数是穷矿，均值被少数富矿拉上去。
+	 */
 	UPROPERTY(EditAnywhere, Category = "Dig", meta = (ClampMin = "0.1", ClampMax = "8"))
 	float GradeSkew = 2.5f;
 

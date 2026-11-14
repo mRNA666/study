@@ -3,6 +3,8 @@
 
 #include "BagHUD.h"
 #include "StudyHUDWidget.h"
+#include "StudyMenuWidget.h"
+#include "studyGameInstance.h"
 #include "studyCharacter.h"
 #include "DropItem.h"
 #include "studyGameState.h"
@@ -17,14 +19,10 @@
 
 namespace
 {
-	/** 含金系数 → 档位词（DESIGN-dig §9.6：用档位词而不是百分比，保住"挖出来才知道"的赌感）
-	 *  阈值按 v0.3 的新分布重标：出矿概率 35%，出矿后含金系数按 V^2 偏斜，多数落在低段 */
+	/** 含金系数 → 档位词。阈值只在 ADropItem::GoldGradeWord 里维护一份，别在这儿再写一套 */
 	FString GoldWord(float GoldContent)
 	{
-		if (GoldContent < 0.001f) { return TEXT("石渣"); }
-		if (GoldContent < 0.05f) { return TEXT("含金：微"); }
-		if (GoldContent < 0.14f) { return TEXT("含金：中"); }
-		return TEXT("含金：富");
+		return ADropItem::GoldGradeWord(GoldContent);
 	}
 }
 
@@ -46,6 +44,45 @@ void ABagHUD::BeginPlay()
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[HUD] UMG 版 HUD 创建失败，退回 Canvas 绘制"));
 		}
+	}
+
+	// 主菜单 / ESC 设置菜单：放在最高层（ZOrder 20），盖住 HUD
+	if (PlayerOwner && !MenuWidget)
+	{
+		MenuWidget = CreateWidget<UStudyMenuWidget>(PlayerOwner, UStudyMenuWidget::StaticClass());
+		if (MenuWidget)
+		{
+			MenuWidget->AddToViewport(20);
+			ShowMainMenuIfNeeded();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[HUD] 菜单控件创建失败"));
+		}
+	}
+}
+
+void ABagHUD::ShowMainMenuIfNeeded()
+{
+	if (!MenuWidget)
+	{
+		return;
+	}
+
+	UstudyGameInstance* GI = GetGameInstance<UstudyGameInstance>();
+	if (GI && GI->bMainMenuDone)
+	{
+		return;	// 已经点过「开始游戏」了（比如从矿洞回营地）
+	}
+
+	MenuWidget->ShowMainMenu();
+}
+
+void ABagHUD::TogglePauseMenu()
+{
+	if (MenuWidget)
+	{
+		MenuWidget->TogglePauseMenu();
 	}
 }
 

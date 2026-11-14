@@ -39,6 +39,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "HUD|Zone")
 	FLinearColor ZoneTextColor = FLinearColor(1.f, 0.35f, 0.2f, 1.f);
 
+	/** ESC：开关设置菜单（角色按 ESC 时调这里） */
+	void TogglePauseMenu();
+
+	/** 开局如果还没点过「开始游戏」，就弹主菜单 */
+	void ShowMainMenuIfNeeded();
+
 private:
 	/** 画所有卸货区的红框和"卸货区"标签（屏幕空间投影，不需要任何资产） */
 	void DrawUnloadZones();
@@ -54,6 +60,10 @@ private:
 	/** UMG 版的 HUD。创建成功时，Canvas 那套就整个不画了 */
 	UPROPERTY(Transient)
 	TObjectPtr<class UStudyHUDWidget> HUDWidget;
+
+	/** 主菜单 / ESC 设置菜单（开场和暂停都用它） */
+	UPROPERTY()
+	TObjectPtr<class UStudyMenuWidget> MenuWidget;
 
 	virtual void BeginPlay() override;
 

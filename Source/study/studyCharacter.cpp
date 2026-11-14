@@ -12,6 +12,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "BagHUD.h"
+#include "GameFramework/PlayerController.h"
 #include "DigVolume.h"
 #include "DropItem.h"
 #include "studyGameState.h"
@@ -338,7 +340,8 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		PlayerInputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AstudyCharacter::DialogDigit9);
 		PlayerInputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AstudyCharacter::DialogConfirm);
 		PlayerInputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &AstudyCharacter::DialogBackspace);
-		PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AstudyCharacter::DialogCancel);
+		// ESC：没开对话框时开关设置菜单，开了就取消对话（在 OnEscapePressed 里分发）
+		PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AstudyCharacter::OnEscapePressed);
 	}
 }
 
@@ -456,6 +459,33 @@ void AstudyCharacter::DialogChoose(int32 Index)
 	if (M)
 	{
 		M->OnDialogOption(this, Index);
+	}
+}
+
+void AstudyCharacter::OnEscapePressed()
+{
+	// 有对话框时：ESC 还是「取消对话」
+	if (IsDialogOpen())
+	{
+		DialogCancel();
+		return;
+	}
+
+	// 没对话时：开关 ESC 设置菜单
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+		{
+			HUD->TogglePauseMenu();
+		}
+	}
+}
+
+void AstudyCharacter::SetHeadLightScale(float Scale)
+{
+	if (HeadLight)
+	{
+		HeadLight->SetIntensity(HeadLightIntensity * FMath::Clamp(Scale, 0.f, 3.f));
 	}
 }
 
