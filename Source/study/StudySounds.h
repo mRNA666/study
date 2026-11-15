@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -44,7 +44,4 @@ namespace StudySounds
 
 	/** 脚步（凑合用打击音压低音高） */
 	USoundBase* Footstep();
-
-	/** 矿洞环境音（循环） */
-	USoundBase* MineAmbience();
 }

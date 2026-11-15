@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "StudySounds.h"
@@ -38,7 +38,6 @@ namespace
 	TStrongObjectPtr<USoundBase> Snd_Error;
 	TStrongObjectPtr<USoundBase> Snd_GameOver;
 	TStrongObjectPtr<USoundBase> Snd_Footstep;
-	TStrongObjectPtr<USoundBase> Snd_MineAmbience;
 }
 
 namespace StudySounds
@@ -87,10 +86,5 @@ namespace StudySounds
 	{
 		// 这两个包里没有专门的脚步，借用"通用打击"当脚步（播放时压低音高）
 		return LoadOnce(Snd_Footstep, TEXT("/Game/Free_Sounds_Pack/wav/Hit_Generic_2-1.Hit_Generic_2-1"));
-	}
-
-	USoundBase* MineAmbience()
-	{
-		return LoadOnce(Snd_MineAmbience, TEXT("/Game/Free_Sounds_Pack/wav/Ambient_Wind_Loop_1.Ambient_Wind_Loop_1"));
 	}
 }

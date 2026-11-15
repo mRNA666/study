@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "studyGameMode.h"
 #include "BagHUD.h"
@@ -118,12 +118,6 @@ void AstudyGameMode::BeginPlay()
 	}
 
 	EnsureWorldBasics();
-
-	// 矿洞环境音：低音量的风声，循环播放（只在矿洞里）
-	if (MapName.Contains(TEXT("Mine")) && !AmbienceComp)
-	{
-		AmbienceComp = UGameplayStatics::SpawnSound2D(this, StudySounds::MineAmbience(), 0.30f);
-	}
 
 	if (MapName.Contains(TEXT("Camp")) && bAutoSpawnCampMerchants)
 	{

@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -63,10 +63,6 @@ protected:
 	/** 缓存的太阳 / 天光，避免每帧遍历关卡找 */
 	TWeakObjectPtr<class ADirectionalLight> SunLight;
 	TWeakObjectPtr<class ASkyLight> SkyLightActor;
-
-	/** 矿洞环境音（常驻播放的音频组件，必须存引用否则会被 GC） */
-	UPROPERTY(Transient)
-	TObjectPtr<class UAudioComponent> AmbienceComp;
 
 	/** 第二天 20:00：结算（没卖掉的黄金按黑市价折算进现金） */
 	void EndMatch();
