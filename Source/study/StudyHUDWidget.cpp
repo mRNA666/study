@@ -25,6 +25,7 @@
 #include "Components/ProgressBar.h"
 #include "Components/EditableTextBox.h"
 #include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
 #include "Styling/CoreStyle.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
@@ -157,7 +158,14 @@ void UStudyHUDWidget::BuildLayout()
 	Place(Root, Cross, FVector2D(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D(0.f, 0.f));
 
 	// ---------------- 准星下方的提示 ----------------
-	HintText = MakeText(WidgetTree, TEXT(""), 18, FLinearColor(1.f, 0.9f, 0.5f, 1.f));
+	// 准星提示：必须是纯白 + 黑色阴影。
+	// 原来用淡黄 (1, 0.9, 0.5)：和头灯照亮的黄褐色岩石**亮度几乎一样**，
+	// 两者都"很亮"，人眼只能靠色相区分，一晃眼就看不见了。
+	// 白字靠的是"高亮 + 周围一圈黑边"，在任何背景上都能读。
+	HintText = MakeText(WidgetTree, TEXT(""), 20, FLinearColor(1.f, 1.f, 1.f, 1.f), true);
+	HintText->SetShadowOffset(FVector2D(2.f, 2.f));
+	HintText->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.95f));
+	HintText->SetJustification(ETextJustify::Center);
 	Place(Root, HintText, FVector2D(0.5f, 0.5f), FVector2D(0.5f, 0.f), FVector2D(0.f, 40.f));
 
 	// ---------------- 一次性提示（本趟带回） ----------------
@@ -207,8 +215,29 @@ void UStudyHUDWidget::BuildLayout()
 			S->SetPadding(FMargin(0.f, 8.f, 0.f, 14.f));
 		}
 
-		// 选项按钮（最多 4 个，多余的隐藏）
-		for (int32 i = 0; i < 4; ++i)
+		// 正文的可滚动版（每日播报那种长文本）：SizeBox 卡最高高度 → ScrollBox → 文本。
+		// 只有 Character->IsDialogBodyScrollable() 为真时显示，平时隐藏。
+		BodyScrollSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		BodyScrollSize->SetMaxDesiredHeight(520.f);
+
+		DialogBodyScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+		DialogBodyScroll->SetScrollBarVisibility(ESlateVisibility::Visible);
+
+		DialogBodyScrollText = MakeText(WidgetTree, TEXT(""), 18, FLinearColor(0.80f, 0.82f, 0.88f, 1.f));
+		DialogBodyScroll->AddChild(DialogBodyScrollText);
+
+		BodyScrollSize->SetContent(DialogBodyScroll);
+		BodyScrollSize->SetVisibility(ESlateVisibility::Collapsed);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(BodyScrollSize)))
+		{
+			S->SetPadding(FMargin(0.f, 8.f, 0.f, 14.f));
+		}
+
+		// 选项按钮（最多 6 个，多余的隐藏）
+		// 为什么是 6：UButton::OnClicked 是动态多播委托，只能绑 UFUNCTION ——
+		// 每个按钮必须配一个独立的 OnOptionN，没法在循环里绑带下标的 lambda。
+		// 6 = 5 件货 + 1 个「算了/离开」；货再多就翻页（↑↓ / 滚轮）。
+		for (int32 i = 0; i < 6; ++i)
 		{
 			UButton* Btn = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
 			UTextBlock* Label = MakeText(WidgetTree, TEXT(""), 20, FLinearColor(0.06f, 0.06f, 0.06f, 1.f), true);
@@ -219,7 +248,9 @@ void UStudyHUDWidget::BuildLayout()
 			case 0: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption1); break;
 			case 1: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption2); break;
 			case 2: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption3); break;
-			default: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption4); break;
+			case 3: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption4); break;
+			case 4: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption5); break;
+			default: Btn->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnOption6); break;
 			}
 
 			Btn->SetVisibility(ESlateVisibility::Collapsed);
@@ -234,8 +265,8 @@ void UStudyHUDWidget::BuildLayout()
 		// 行内数字输入：卖 [____] g  [确认]
 		NumberRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
-		NumberRow->AddChildToHorizontalBox(
-			MakeText(WidgetTree, TEXT("卖"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true));
+		NumberLabelText = MakeText(WidgetTree, TEXT("卖"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true);
+		NumberRow->AddChildToHorizontalBox(NumberLabelText);
 
 		NumberBox = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
 		NumberBox->SetHintText(FText::FromString(TEXT("克数")));
@@ -648,6 +679,22 @@ void UStudyHUDWidget::Refresh()
 			LastNumberUnit = Unit;
 			NumberUnitText->SetText(FText::FromString(Unit));
 		}
+
+		// 行首字和输入框灰字也跟着换：卖金是「卖 / 克数」，工艺品报价是「卖 / 含量」。
+		// 不换的话报含金量那一页会写成"卖 克数 %"，玩家会以为要填克数。
+		const FString Label = Character->GetDialogNumberLabel();
+		if (NumberLabelText && !Label.Equals(LastNumberLabel))
+		{
+			LastNumberLabel = Label;
+			NumberLabelText->SetText(FText::FromString(Label));
+		}
+
+		const FString Hint = Character->GetDialogNumberHint();
+		if (NumberBox && !Hint.Equals(LastNumberHint))
+		{
+			LastNumberHint = Hint;
+			NumberBox->SetHintText(FText::FromString(Hint));
+		}
 	}
 
 	bWasDialogOpen = bDialogOpen;
@@ -661,7 +708,48 @@ void UStudyHUDWidget::Refresh()
 		if (bDialogOpen)
 		{
 			DialogTitleText->SetText(FText::FromString(Character->GetDialogTitle()));
-			DialogBodyText->SetText(FText::FromString(Character->GetDialogBody()));
+
+			// 正文：短的直接摆；长的（每日播报）换成可滚动的那一版
+			const bool bScrollBody = Character->IsDialogBodyScrollable();
+			const FString& Body = Character->GetDialogBody();
+
+			if (DialogBodyText)
+			{
+				DialogBodyText->SetVisibility(bScrollBody
+					? ESlateVisibility::Collapsed
+					: ESlateVisibility::SelfHitTestInvisible);
+
+				if (!bScrollBody)
+				{
+					DialogBodyText->SetText(FText::FromString(Body));
+				}
+			}
+
+			if (BodyScrollSize)
+			{
+				BodyScrollSize->SetVisibility(bScrollBody
+					? ESlateVisibility::Visible
+					: ESlateVisibility::Collapsed);
+			}
+
+			if (bScrollBody && DialogBodyScrollText)
+			{
+				// 换了一份新内容才重写 + 回到顶部（否则别打断玩家正在滚的位置）
+				if (!Body.Equals(LastScrollBody))
+				{
+					LastScrollBody = Body;
+					DialogBodyScrollText->SetText(FText::FromString(Body));
+
+					if (DialogBodyScroll)
+					{
+						DialogBodyScroll->SetScrollOffset(0.f);
+					}
+				}
+			}
+			else
+			{
+				LastScrollBody.Reset();
+			}
 
 			const TArray<FString>& Options = Character->GetDialogOptions();
 			for (int32 i = 0; i < OptionButtons.Num(); ++i)
@@ -747,6 +835,41 @@ void UStudyHUDWidget::Refresh()
 }
 
 // ---------------- 交互 ----------------
+
+void UStudyHUDWidget::ScrollBodyBy(float Pixels)
+{
+	if (!DialogBodyScroll || FMath::IsNearlyZero(Pixels))
+	{
+		return;
+	}
+
+	const float End = FMath::Max(0.f, DialogBodyScroll->GetScrollOffsetOfEnd());
+	DialogBodyScroll->SetScrollOffset(
+		FMath::Clamp(DialogBodyScroll->GetScrollOffset() + Pixels, 0.f, End));
+}
+
+FReply UStudyHUDWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// 鼠标停在对话框上时滚轮会被 UMG 先吃掉（到不了视口的 MouseWheelAxis），
+	// 所以这里再接一份：对话开着就把滚轮当翻页 / 滚正文。
+	AstudyCharacter* Character = GetStudyCharacter();
+	const float Delta = InMouseEvent.GetWheelDelta();
+	if (Character && Character->IsDialogOpen() && FMath::Abs(Delta) > 0.01f)
+	{
+		// ① 长正文（每日播报）：滚正文本身
+		if (Character->IsDialogBodyScrollable())
+		{
+			ScrollBodyBy(Delta > 0.f ? -48.f : 48.f);
+			return FReply::Handled();
+		}
+
+		// ② 列表（卖工艺品 / 听泉鉴宝）：翻页。往上滚 = 看前面的
+		Character->ScrollDialogList(Delta > 0.f ? -1 : 1);
+		return FReply::Handled();
+	}
+
+	return Super::NativeOnMouseWheel(InGeometry, InMouseEvent);
+}
 
 void UStudyHUDWidget::ChooseOption(int32 Index)
 {

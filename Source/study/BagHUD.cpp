@@ -834,3 +834,11 @@ bool ABagHUD::CloseHandicraftPanels()
 	}
 	return bClosed;
 }
+
+void ABagHUD::ScrollDialogBody(float Pixels)
+{
+	if (HUDWidget)
+	{
+		HUDWidget->ScrollBodyBy(Pixels);
+	}
+}

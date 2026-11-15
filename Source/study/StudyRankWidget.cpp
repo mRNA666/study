@@ -152,25 +152,20 @@ void UStudyRankWidget::Refresh()
 
 	TArray<FEntry> List;
 
-	// 自己：仓库 + 暂存 + 背包里背着的，全部按正规价折算
-	float Carried = 0.f;
-	if (const AstudyCharacter* Char = Cast<AstudyCharacter>(GetOwningPlayerPawn()))
-	{
-		Carried = Char->GetCarriedGoldGrams();
-	}
-	const float MyGrams = GI->GoldGrams + GI->StashedGoldGrams + Carried;
+	// 自己和对手走同一个口径（GetMyAssetTotal / GetRivalAssetTotal）：
+	//   现金 + 仓库/暂存/身上背着的金 + 工艺品账面价（没鉴定过按黑商报的含金量）
+	// 这样 Tab 和每日播报永远是同一个数，不会再对不上。
 	FEntry Me;
 	Me.Name = TEXT("你");
-	Me.Asset = GI->Cash + FMath::RoundToInt(MyGrams * 1000.f);
+	Me.Asset = GI->GetMyAssetTotal();
 	Me.bMe = true;
 	List.Add(Me);
 
-	for (const FRivalState& R : GI->Rivals)
+	for (int32 i = 0; i < GI->Rivals.Num(); ++i)
 	{
 		FEntry E;
-		E.Name = R.Name;
-		// 现金 + 囤着的金 + 手上压着的工艺品（按真实金重算，和正规买家给的钱一致）
-		E.Asset = R.GetAssetTotal() + UstudyGameInstance::SumCraftValue(R.Handicraft);
+		E.Name = GI->Rivals[i].Name;
+		E.Asset = GI->GetRivalAssetTotal(i);
 		List.Add(E);
 	}
 
@@ -199,20 +194,17 @@ void UStudyRankWidget::Refresh()
 			}
 			else
 			{
-				// 别人的资产只给区间（PRD §2.2：名次精确、金额模糊）
-				const int32 Lo = FMath::RoundToInt(E.Asset * 0.85f / 1000.f) * 1000;
-				const int32 Hi = FMath::RoundToInt(E.Asset * 1.15f / 1000.f) * 1000;
-
-				if (Hi >= 10000)
+				// 别人的资产只给一个模糊数（PRD §2.2：名次精确、金额模糊）
+				if (E.Asset >= 10000)
 				{
 					RowTexts[i]->SetText(FText::FromString(FString::Printf(
-						TEXT("%d.  %-6s  约 %.1f~%.1f 万"),
-						i + 1, *E.Name, Lo / 10000.f, Hi / 10000.f)));
+						TEXT("%d.  %-6s  约 %.1f 万"),
+						i + 1, *E.Name, E.Asset / 10000.f)));
 				}
 				else
 				{
 					RowTexts[i]->SetText(FText::FromString(FString::Printf(
-						TEXT("%d.  %-6s  约 %d~%d"), i + 1, *E.Name, Lo, Hi)));
+						TEXT("%d.  %-6s  约 %d"), i + 1, *E.Name, E.Asset)));
 				}
 			}
 

@@ -373,7 +373,12 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 			{
 				const FString Report = GI->PendingReport;
 				GI->PendingReport.Reset();
+
+				// 播报不长可读：先把上一轮的商人摘掉（免得点「知道了」被当成又点了他菜单第 0 项），
+				// 再让正文进可滚动区域（信息多的时候能滚）。
+				Char->SetDialogMerchant(nullptr);
 				Char->OpenOptionDialog(TEXT("醒 了"), Report, { TEXT("知道了") });
+				Char->SetDialogBodyScrollable(true);
 			}
 		}
 	}

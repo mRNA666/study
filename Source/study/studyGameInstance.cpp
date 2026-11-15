@@ -6,6 +6,7 @@
 #include "studyGameState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 
 void UstudyGameInstance::ResetRun()
 {
@@ -45,6 +46,11 @@ void UstudyGameInstance::ResetRun()
 
 void UstudyGameInstance::SleepToNextDay()
 {
+	// 先补跑对手：你提前睡觉 = 放弃了今天剩下的白天，对手在这段时间里照样干活。
+	// （放在播报之前，这样补出来的事件会出现在今天的简报里）
+	const float SkippedDayMinutes = FMath::Max(DayEndMinutes - ClockMinutes, 0.f);
+	CatchUpRivals(SkippedDayMinutes);
+
 	// 先播报：这时候 DayIndex 还是"刚结束的那天"
 	ComposeMorningReport();
 
@@ -55,8 +61,8 @@ void UstudyGameInstance::SleepToNextDay()
 	bBuyerRejectedToday = false;
 	RollDailyStrictness();
 
-	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00（黑商严格度 %.2f）"),
-		DayIndex, FenceStrictness);
+	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00（黑商严格度 %.2f，补跑 %.0f 游戏分钟）"),
+		DayIndex, FenceStrictness, SkippedDayMinutes);
 }
 
 void UstudyGameInstance::ClampClock()
@@ -156,7 +162,12 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 		}
 	}
 
-	RivalClock += DeltaSeconds;
+	// 关键：对手的时钟跑【游戏分钟】，不是真实秒。
+	// 以前是 RivalClock += DeltaSeconds（真实秒），于是"玩家睡觉跳天"时真实时间只过去 1.5 秒，
+	// 对手一整天一次也动不了 —— 睡觉变成了白嫖一天的时间机器。
+	const float GameMinutesPerSecond =
+		60.f / FMath::Max(RealSecondsPerGameHour, 1.f);
+	RivalClock += DeltaSeconds * GameMinutesPerSecond;
 
 	// 黑市价随时间恢复（每秒 0.0008 → 跌 6% 大约 75 秒回满）
 	BlackMarketMultiplier = FMath::Min(1.f, BlackMarketMultiplier + DeltaSeconds * 0.0008f);
@@ -169,142 +180,195 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 			continue;
 		}
 
-		// ---- 路径零：25% 概率先去柜台看看（抢货） ----
-		// 关键：他真的掏钱买，而且只花得起自己现金的 40%。
-		// 开局现金 4~6 千，柜台上动辄几万的东西他根本不会碰 —— 不会出现
-		// "刚开局就有人把 500 g 的金像抱走"这种乱套的事。
-		if (FMath::FRand() < 0.25f && Shelf.Num() > 0)
+		if (!StepRivalAction(R))
 		{
-			const int32 Budget = FMath::RoundToInt(R.Cash * 0.4f);
+			// 什么都没做成（没钱/没货），过一会儿再看
+			R.NextActionAt = RivalClock + FMath::FRandRange(30.f, 60.f);
+		}
+	}
+}
 
-			TArray<int32> Pickable;
-			for (int32 s = 0; s < Shelf.Num(); ++s)
+bool UstudyGameInstance::StepRivalAction(FRivalState& R)
+{
+	if (!Shelf.Num() && R.Handicraft.Num() == 0 && R.Cash < 1600)
+	{
+		// 完全没有可做的事：留给调用方去设置等待时间
+		return false;
+	}
+
+	// ---- 路径零：25% 概率先去柜台看看（抢货） ----
+	// 关键：他真的掏钱买，而且只花得起自己现金的 40%。
+	// 开局现金 4~6 千，柜台上动辄几万的东西他根本不会碰 —— 不会出现
+	// "刚开局就有人把 500 g 的金像抱走"这种乱套的事。
+	if (FMath::FRand() < 0.25f && Shelf.Num() > 0)
+	{
+		const int32 Budget = FMath::RoundToInt(R.Cash * 0.4f);
+
+		TArray<int32> Pickable;
+		for (int32 s = 0; s < Shelf.Num(); ++s)
+		{
+			if (Shelf[s].bSold)
 			{
-				if (Shelf[s].bSold)
-				{
-					continue;
-				}
-				if (Shelf[s].Item.Price > Budget)
-				{
-					continue;			// 买不起，看看就走
-				}
-
-				const float Grams = Shelf[s].Item.NominalGrams;
-				if (R.Style == 0 && Grams > 60.f) { continue; }		// 铁头：只买便宜货
-				if (R.Style == 2 && Grams < 250.f) { continue; }	// 疤脸：只买大件
-				Pickable.Add(s);
-			}
-
-			if (Pickable.Num() > 0)
-			{
-				const int32 Choice = Pickable[FMath::RandRange(0, Pickable.Num() - 1)];
-				FShelfSlot& Bought = Shelf[Choice];
-
-				R.Cash -= Bought.Item.Price;
-				Bought.bSold = true;
-				Bought.BuyerName = R.Name;
-
-				// 买到的货压在他手上，算进资产（卖出去才变成现金，见下面"手头紧"那条）
-				R.Handicraft.Add(Bought.Item);
-
-				UE_LOG(LogTemp, Log, TEXT("[Shelf] %s 花了 %d 币买走 %s（现金剩 %d，手上工艺品 %d 件）"),
-					*R.Name, Bought.Item.Price,
-					*UstudyGameInstance::GetCategoryName(Bought.Item.Category),
-					R.Cash, R.Handicraft.Num());
-
-				PushFeed(FString::Printf(TEXT("%s 花 %d 币把%s抱走了"),
-					*R.Name, Bought.Item.Price,
-					*UstudyGameInstance::GetCategoryName(Bought.Item.Category)));
-
-				R.NextActionAt = RivalClock + FMath::FRandRange(60.f, 150.f);
 				continue;
 			}
-		}
-
-		// ---- 路径零半：手头紧了就把压着的工艺品卖给正规买家（必验，按真实价值给钱） ----
-		if (R.Cash < 3000 && R.Handicraft.Num() > 0)
-		{
-			const FHandicraftItem SoldIt = R.Handicraft[0];
-			const int32 Earned = UstudyGameInstance::GetRealValue(SoldIt);
-
-			R.Cash += Earned;
-			R.Handicraft.RemoveAt(0);
-
-			UE_LOG(LogTemp, Log, TEXT("[Rival] %s 把 %s 卖给正规买家 → %d 币（现金 %d）"),
-				*R.Name, *UstudyGameInstance::GetCategoryName(SoldIt.Category), Earned, R.Cash);
-
-			PushFeed(FString::Printf(TEXT("%s 把%s出手了"), *R.Name,
-				*UstudyGameInstance::GetCategoryName(SoldIt.Category)));
-
-			R.NextActionAt = RivalClock + FMath::FRandRange(40.f, 90.f);
-			continue;
-		}
-
-		// ---- 路径一：赌工艺品（小概率，现金够才赌；PRD 2.9 第一天就开门） ----
-		if (R.Cash >= 1600 && FMath::FRand() < 0.12f)
-		{
-			const float Stake = 1500.f;
-			R.Cash -= static_cast<int32>(Stake);
-			// 55% 是真金：赚 80%；否则本金打水漂
-			if (FMath::FRand() < 0.55f)
+			if (Shelf[s].Item.Price > Budget)
 			{
-				R.Cash += static_cast<int32>(Stake * 1.8f);
-			}
-			R.NextActionAt = RivalClock + FMath::FRandRange(90.f, 200.f);
-			continue;
-		}
-
-		// ---- 路径二：买开采权 → 下矿 → 卖 ----
-		const int32 RightPrice = 4000;
-		if (R.RightsToday < MaxMineRightsPerDay && R.Cash >= RightPrice)
-		{
-			R.Cash -= RightPrice;
-			R.RightsToday++;
-			R.TripsDone++;
-
-			// 一次下矿的产量（按性格给不同区间）
-			float Gained = 0.f;
-			switch (R.Style)
-			{
-			case 1:  Gained = FMath::FRandRange(8.f, 18.f);  break;	// 独眼：波动最大
-			case 2:  Gained = FMath::FRandRange(7.f, 12.f);  break;	// 疤脸：偏高但慢
-			default: Gained = FMath::FRandRange(6.f, 10.f);  break;	// 铁头：平稳
-			}
-			R.StashGrams += Gained;
-
-			// 疤脸先囤货，攒到 20g 才出手
-			const bool bHold = (R.Style == 2 && R.StashGrams < 20.f);
-			if (!bHold)
-			{
-				const float Sold = R.StashGrams;
-				// 独眼走黑市（65%，还会砸价）；另外两个按正规价（100%）
-				const float Rate = (R.Style == 1)
-					? (0.65f * BlackMarketMultiplier)
-					: 1.0f;
-				R.Cash += FMath::RoundToInt(Sold * 1000.f * Rate);
-				R.StashGrams = 0.f;
-
-				if (R.Style == 1)
-				{
-					ApplyBlackMarketDump(Sold);
-				}
-				UE_LOG(LogTemp, Log, TEXT("[Rival] %s 卖了 %.1f g（x%.2f）→ 现金 %d"),
-					*R.Name, Sold, Rate, R.Cash);
-
-				PushFeed(FString::Printf(TEXT("%s 卖了 %.1f g"), *R.Name, Sold));
+				continue;			// 买不起，看看就走
 			}
 
-			// 下一次行动的间隔（性格不同）
-			const float Gap = (R.Style == 1)
-				? FMath::FRandRange(120.f, 200.f)
-				: (R.Style == 2 ? FMath::FRandRange(220.f, 340.f) : FMath::FRandRange(200.f, 320.f));
-			R.NextActionAt = RivalClock + Gap;
-			continue;
+			const float Grams = Shelf[s].Item.NominalGrams;
+			if (R.Style == 0 && Grams > 60.f) { continue; }		// 铁头：只买便宜货
+			if (R.Style == 2 && Grams < 250.f) { continue; }	// 疤脸：只买大件
+			Pickable.Add(s);
 		}
 
-		// ---- 路径三：没钱，等一会儿再说 ----
-		R.NextActionAt = RivalClock + FMath::FRandRange(30.f, 60.f);
+		if (Pickable.Num() > 0)
+		{
+			const int32 Choice = Pickable[FMath::RandRange(0, Pickable.Num() - 1)];
+			FShelfSlot& Bought = Shelf[Choice];
+
+			R.Cash -= Bought.Item.Price;
+			Bought.bSold = true;
+			Bought.BuyerName = R.Name;
+
+			// 买到的货压在他手上，算进资产（卖出去才变成现金，见下面"手头紧"那条）
+			R.Handicraft.Add(Bought.Item);
+
+			UE_LOG(LogTemp, Log, TEXT("[Shelf] %s 花了 %d 币买走 %s（现金剩 %d，手上工艺品 %d 件）"),
+				*R.Name, Bought.Item.Price,
+				*UstudyGameInstance::GetCategoryName(Bought.Item.Category),
+				R.Cash, R.Handicraft.Num());
+
+			PushFeed(FString::Printf(TEXT("%s 花 %d 币把%s抱走了"),
+				*R.Name, Bought.Item.Price,
+				*UstudyGameInstance::GetCategoryName(Bought.Item.Category)));
+
+			R.NextActionAt = RivalClock + FMath::FRandRange(60.f, 150.f);
+			return true;
+		}
 	}
+
+	// ---- 路径零半：手头紧了就把压着的工艺品卖给正规买家（必验，按真实价值给钱） ----
+	if (R.Cash < 3000 && R.Handicraft.Num() > 0)
+	{
+		const FHandicraftItem SoldIt = R.Handicraft[0];
+		const int32 Earned = UstudyGameInstance::GetRealValue(SoldIt);
+
+		R.Cash += Earned;
+		R.Handicraft.RemoveAt(0);
+
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 把 %s 卖给正规买家 → %d 币（现金 %d）"),
+			*R.Name, *UstudyGameInstance::GetCategoryName(SoldIt.Category), Earned, R.Cash);
+
+		PushFeed(FString::Printf(TEXT("%s 把%s出手了"), *R.Name,
+			*UstudyGameInstance::GetCategoryName(SoldIt.Category)));
+
+		R.NextActionAt = RivalClock + FMath::FRandRange(40.f, 90.f);
+		return true;
+	}
+
+	// ---- 路径一：赌工艺品（小概率，现金够才赌；PRD 2.9 第一天就开门） ----
+	if (R.Cash >= 1600 && FMath::FRand() < 0.12f)
+	{
+		const float Stake = 1500.f;
+		R.Cash -= static_cast<int32>(Stake);
+		// 55% 是真金：赚 80%；否则本金打水漂
+		if (FMath::FRand() < 0.55f)
+		{
+			R.Cash += static_cast<int32>(Stake * 1.8f);
+		}
+		R.NextActionAt = RivalClock + FMath::FRandRange(90.f, 200.f);
+		return true;
+	}
+
+	// ---- 路径二：买开采权 → 下矿 → 卖 ----
+	const int32 RightPrice = 4000;
+	if (R.RightsToday < MaxMineRightsPerDay && R.Cash >= RightPrice)
+	{
+		R.Cash -= RightPrice;
+		R.RightsToday++;
+		R.TripsDone++;
+
+		// 一次下矿的产量（按性格给不同区间）
+		float Gained = 0.f;
+		switch (R.Style)
+		{
+		case 1:  Gained = FMath::FRandRange(8.f, 18.f);  break;	// 独眼：波动最大
+		case 2:  Gained = FMath::FRandRange(7.f, 12.f);  break;	// 疤脸：偏高但慢
+		default: Gained = FMath::FRandRange(6.f, 10.f);  break;	// 铁头：平稳
+		}
+		R.StashGrams += Gained;
+
+		// 疤脸先囤货，攒到 20g 才出手
+		const bool bHold = (R.Style == 2 && R.StashGrams < 20.f);
+		if (!bHold)
+		{
+			const float Sold = R.StashGrams;
+			// 独眼走黑市（65%，还会砸价）；另外两个按正规价（100%）
+			const float Rate = (R.Style == 1)
+				? (0.65f * BlackMarketMultiplier)
+				: 1.0f;
+			R.Cash += FMath::RoundToInt(Sold * 1000.f * Rate);
+			R.StashGrams = 0.f;
+
+			if (R.Style == 1)
+			{
+				ApplyBlackMarketDump(Sold);
+			}
+			UE_LOG(LogTemp, Log, TEXT("[Rival] %s 卖了 %.1f g（x%.2f）→ 现金 %d"),
+				*R.Name, Sold, Rate, R.Cash);
+
+			PushFeed(FString::Printf(TEXT("%s 卖了 %.1f g"), *R.Name, Sold));
+		}
+
+		// 下一次行动的间隔（性格不同）
+		const float Gap = (R.Style == 1)
+			? FMath::FRandRange(120.f, 200.f)
+			: (R.Style == 2 ? FMath::FRandRange(220.f, 340.f) : FMath::FRandRange(200.f, 320.f));
+		R.NextActionAt = RivalClock + Gap;
+		return true;
+	}
+
+	// 什么都不成（路径三：没钱，等一会儿再说）
+	return false;
+}
+
+void UstudyGameInstance::CatchUpRivals(float ElapsedGameMinutes)
+{
+	if (ElapsedGameMinutes <= 1.f || Rivals.Num() == 0)
+	{
+		return;
+	}
+
+	// 玩家提前睡觉 = 放弃了今天剩下的白天。这段时间对手照样在干活，
+	// 否则"睡觉跳天"就能把对手的时间冻结（还能白嫖货架和日价的刷新）。
+	// 上限 8 次，和正常玩一天的行动次数同量级，防止睡觉刷出天文数字。
+	constexpr int32 MaxActionsPerRival = 8;
+
+	int32 TotalActions = 0;
+	for (FRivalState& R : Rivals)
+	{
+		for (int32 n = 0; n < MaxActionsPerRival; ++n)
+		{
+			if (!StepRivalAction(R))
+			{
+				break;
+			}
+			++TotalActions;
+		}
+	}
+
+	// 跳过的时间也要记进对手时钟，否则他们的节奏会一直落后
+	RivalClock += ElapsedGameMinutes;
+
+	// 新一天的第一次行动错开，别所有人同一帧一起动
+	for (FRivalState& R : Rivals)
+	{
+		R.NextActionAt = FMath::Max(R.NextActionAt, RivalClock + FMath::FRandRange(10.f, 60.f));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Rival] 玩家跳过了 %.0f 游戏分钟，补跑 %d 次对手行动"),
+		ElapsedGameMinutes, TotalActions);
 }
 
 
@@ -362,12 +426,19 @@ int32 UstudyGameInstance::GetRealValue(const FHandicraftItem& Item)
 	return FMath::RoundToInt(Item.NominalGrams * Item.RealPurity * 1000.f);
 }
 
+int32 UstudyGameInstance::GetCraftAssetValue(const FHandicraftItem& Item)
+{
+	// 账面口径：没鉴定过就只有黑商那句报价，按它估；鉴定过才用真实含金量
+	const float Purity = Item.bAppraised ? Item.RealPurity : Item.DeclaredPurity;
+	return FMath::RoundToInt(Item.NominalGrams * Purity * 1000.f);
+}
+
 int32 UstudyGameInstance::SumCraftValue(const TArray<FHandicraftItem>& Items)
 {
 	int32 Total = 0;
 	for (const FHandicraftItem& It : Items)
 	{
-		Total += GetRealValue(It);
+		Total += GetCraftAssetValue(It);
 	}
 	return Total;
 }
@@ -640,6 +711,21 @@ int32 UstudyGameInstance::GetMyAssetTotal() const
 	int32 Total = Cash + FMath::RoundToInt(
 		(GoldGrams + StashedGoldGrams) * static_cast<float>(AstudyGameState::BasePricePerGram));
 
+	// 身上背着的金（挖出来还没交回营地）也算资产 ——
+	// 不算的话 Tab 和每日播报会差一截，人在矿洞里的时候尤其明显
+	if (const UWorld* W = GetWorld())
+	{
+		if (const APlayerController* PC = W->GetFirstPlayerController())
+		{
+			if (const AstudyCharacter* C = Cast<AstudyCharacter>(PC->GetPawn()))
+			{
+				Total += FMath::RoundToInt(
+					C->GetCarriedGoldGrams() * static_cast<float>(AstudyGameState::BasePricePerGram));
+			}
+		}
+	}
+
+	// 工艺品按账面价（没鉴定过 = 黑商报的含金量）
 	Total += SumCraftValue(HandicraftBag);
 	return Total;
 }
@@ -683,7 +769,8 @@ void UstudyGameInstance::ComposeMorningReport()
 	}
 	else
 	{
-		const int32 MaxLines = 6;
+		// 播报面板可以滚，所以不用再砍条数：一天最多留 12 条全给玩家看
+		const int32 MaxLines = 12;
 		for (int32 i = 0; i < TodayFeed.Num() && i < MaxLines; ++i)
 		{
 			Body += FString::Printf(TEXT("· %s\n"), *TodayFeed[i]);
@@ -714,18 +801,18 @@ void UstudyGameInstance::ComposeMorningReport()
 		}
 	}
 
-	// 明天会发生什么
-	const int32 NextDay = FinishedDay + 1;
-	if (NextDay <= TotalDays)
+	// 播报是"睡醒之后"看的，所以这里说的是【今天】会发生什么
+	const int32 Today = FinishedDay + 1;
+	if (Today <= TotalDays)
 	{
-		Body += FString::Printf(TEXT("\n明天（第 %d 天）："), NextDay);
-		Body += (NextDay % 2 == 0)
+		Body += FString::Printf(TEXT("\n今天（第 %d 天）："), Today);
+		Body += (Today % 2 == 0)
 			? TEXT("正规买家开窗口，全场 3000 g 配额；黑市换新货")
 			: TEXT("黑市换新货；正规买家明天才来");
 	}
 	else
 	{
-		Body += TEXT("\n今天是最后一夜了。");
+		Body += TEXT("\n今天是最后一天了。");
 	}
 
 	PendingReport = Body;

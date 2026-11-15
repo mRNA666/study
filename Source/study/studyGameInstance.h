@@ -322,10 +322,17 @@ public:
 	 */
 	static void GenerateShelf(int32 InDay, int32 Seed, TArray<FShelfSlot>& OutShelf, float MarketRate = 0.65f);
 
-	/** 一件货的真实可变现（按正规全价算） */
+	/** 一件货的真实可变现（按正规全价算）——真金白银卖出去用的就是这个 */
 	static int32 GetRealValue(const FHandicraftItem& Item);
 
-	/** 一堆工艺品的真实价值合计（对手资产、背包估值用） */
+	/**
+	 * 一件货的「账面资产」（Tab / 每日播报用）。
+	 * 和 GetRealValue 的区别：**没鉴定过就按黑商报的含金量估**，鉴定过才按真实。
+	 * 为什么：你手里只有黑商那个数字，用真实值会让播报替你"免费鉴宝"。
+	 */
+	static int32 GetCraftAssetValue(const FHandicraftItem& Item);
+
+	/** 一堆工艺品的账面资产合计（对手资产、背包估值用） */
 	static int32 SumCraftValue(const TArray<FHandicraftItem>& Items);
 
 	// ---------------- 模拟对手（AI 矿工） ----------------
@@ -353,6 +360,15 @@ public:
 
 	/** 每帧推进：换天重置、黑市价恢复、到点让对手行动。由 GameMode 调 */
 	void TickRivals(float DeltaSeconds);
+
+	/** 让某个对手做一次行动。返回 true = 这次真的做成了什么（调用方据此决定要不要重排时间） */
+	bool StepRivalAction(FRivalState& R);
+
+	/**
+	 * 玩家提前睡觉、跳过今天剩下的白天时调用：把这段时间里对手本该做的事补上。
+	 * 不补的话，"睡觉跳天"会把对手的时间冻结 —— 那是免费的时间机器。
+	 */
+	void CatchUpRivals(float ElapsedGameMinutes);
 
 	/** 抛售 Grams 克：把黑市价砸下去一点（有地板） */
 	void ApplyBlackMarketDump(float Grams);

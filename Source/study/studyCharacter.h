@@ -338,8 +338,30 @@ public:
 	/** 数字输入行显示的单位（卖金 g / 卖工艺品 %） */
 	FString DialogNumberUnit = TEXT("g");
 
+	/** 数字输入行行首那个字（默认「卖」） + 输入框里的灰字（默认「克数」） */
+	FString DialogNumberLabel = TEXT("卖");
+	FString DialogNumberHint = TEXT("克数");
+
 	void SetDialogNumberUnit(const FString& InUnit) { DialogNumberUnit = InUnit; }
 	FString GetDialogNumberUnit() const { return DialogNumberUnit; }
+
+	/** 一次把「行首字 / 灰字 / 单位」都设好（卖金：卖·克数·g；工艺品报价：卖·含量·%） */
+	void SetDialogNumberStyle(const FString& InLabel, const FString& InHint, const FString& InUnit)
+	{
+		DialogNumberLabel = InLabel;
+		DialogNumberHint = InHint;
+		DialogNumberUnit = InUnit;
+	}
+	const FString& GetDialogNumberLabel() const { return DialogNumberLabel; }
+	const FString& GetDialogNumberHint() const { return DialogNumberHint; }
+
+	/**
+	 * 正文太长时把它放进可滚动区域（每日播报用）。
+	 * 打开新对话时会自动复位，所以设置它的代码要写在 OpenOptionDialog 之后。
+	 */
+	bool bDialogBodyScrollable = false;
+	void SetDialogBodyScrollable(bool bIn) { bDialogBodyScrollable = bIn; }
+	bool IsDialogBodyScrollable() const { return bDialogBodyScrollable; }
 
 	/** 关闭对话 */
 	void CloseDialog();
@@ -423,7 +445,22 @@ protected:
 	/** 选第 Index 条选项（0 起） */
 	void DialogChoose(int32 Index);
 
+	/** 列表翻页：Delta = +1 下一件 / -1 上一件（↑↓、滚轮、PageUp/PageDown） */
+	void DialogScroll(int32 Delta);
+
+	/** 滚轮轴回调（一档 = 1.0） */
+	void DialogScrollAxis(float Value);
+
+	/** 键位包装：↑↓ 一次一件，PageUp/PageDown 一次一页（一页 5 件） */
+	void DialogScrollUp() { DialogScroll(-1); }
+	void DialogScrollDown() { DialogScroll(1); }
+	void DialogScrollPageUp() { DialogScroll(-5); }
+	void DialogScrollPageDown() { DialogScroll(5); }
+
 public:
+	/** 列表翻页（HUD 的滚轮回调也要用，所以对外开一个） */
+	void ScrollDialogList(int32 Delta) { DialogScroll(Delta); }
+
 	/** 准星是不是指着梯子（HUD 显示"按 E 爬梯"） */
 	bool IsFocusingLadder() const { return bFocusingLadder; }
 

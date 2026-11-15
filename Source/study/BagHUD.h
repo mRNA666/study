@@ -54,6 +54,9 @@ public:
 	/** 关掉货架/背包面板（ESC 先关面板）；返回 true 表示确实关掉了什么 */
 	bool CloseHandicraftPanels();
 
+	/** 滚一下对话框正文（每日播报那种长文本；键盘翻页也走这里） */
+	void ScrollDialogBody(float Pixels);
+
 	/** 货架或背包面板是不是开着（HUD 用它决定要不要抢输入模式） */
 	bool IsHandicraftPanelOpen() const;
 

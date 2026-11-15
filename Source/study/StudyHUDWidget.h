@@ -37,15 +37,26 @@ public:
 	UFUNCTION() void OnOption2() { ChooseOption(1); }
 	UFUNCTION() void OnOption3() { ChooseOption(2); }
 	UFUNCTION() void OnOption4() { ChooseOption(3); }
+	UFUNCTION() void OnOption5() { ChooseOption(4); }
+	UFUNCTION() void OnOption6() { ChooseOption(5); }
 	UFUNCTION() void OnNumberSubmit();
 	UFUNCTION() void OnNumberSubmit2();
 	UFUNCTION() void OnDialogClose();
+
+	/** 滚一下对话框正文（长正文时用；↑↓ / PageUp/Down 也走这里） */
+	void ScrollBodyBy(float Pixels);
 
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+
+	/**
+	 * 滚轮：鼠标停在对话框上时，滚轮事件会被 UMG 先吃掉（到不了视口的 MouseWheelAxis），
+	 * 所以这里再接一份 —— 对话开着就翻页。
+	 */
+	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 	/** 搭建整个控件树（只跑一次） */
 	void BuildLayout();
@@ -84,6 +95,9 @@ protected:
 	UPROPERTY() TObjectPtr<UTextBlock> HintText;
 	UPROPERTY() TObjectPtr<UTextBlock> NoticeText;
 
+	/** 数字输入行开头的那个字（默认「卖」） */
+	UPROPERTY() TObjectPtr<UTextBlock> NumberLabelText;
+
 	/** 数字输入行后面的单位标签（g / %） */
 	UPROPERTY() TObjectPtr<UTextBlock> NumberUnitText;
 
@@ -94,6 +108,11 @@ protected:
 	UPROPERTY() TObjectPtr<UBorder> DialogBorder;
 	UPROPERTY() TObjectPtr<UTextBlock> DialogTitleText;
 	UPROPERTY() TObjectPtr<UTextBlock> DialogBodyText;
+
+	/** 正文的可滚动版（每日播报这种长文本用；SizeBox 卡最高高度，ScrollBox 里面滚） */
+	UPROPERTY() TObjectPtr<class USizeBox> BodyScrollSize;
+	UPROPERTY() TObjectPtr<class UScrollBox> DialogBodyScroll;
+	UPROPERTY() TObjectPtr<UTextBlock> DialogBodyScrollText;
 	UPROPERTY() TObjectPtr<UEditableTextBox> NumberBox;
 	UPROPERTY() TObjectPtr<UButton> NumberSubmitButton;
 	UPROPERTY() TObjectPtr<class UHorizontalBox> NumberRow;
@@ -130,6 +149,13 @@ protected:
 
 	/** 上一帧输入框的单位（g / %），变了才改文字 */
 	FString LastNumberUnit;
+
+	/** 上一帧输入框的行首字 / 灰字，变了才改 */
+	FString LastNumberLabel;
+	FString LastNumberHint;
+
+	/** 上一帧滚动态正文的内容（变了才重写 + 回到顶部） */
+	FString LastScrollBody;
 
 	/** 输入框预填：记住已经应用过的版本号，避免每帧覆盖玩家正在敲的字 */
 	int32 AppliedPrefill1 = -1;

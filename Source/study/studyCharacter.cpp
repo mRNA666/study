@@ -358,8 +358,17 @@ void AstudyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		PlayerInputComponent->BindKey(EKeys::Nine, IE_Pressed, this, &AstudyCharacter::DialogDigit9);
 		PlayerInputComponent->BindKey(EKeys::Enter, IE_Pressed, this, &AstudyCharacter::DialogConfirm);
 		PlayerInputComponent->BindKey(EKeys::BackSpace, IE_Pressed, this, &AstudyCharacter::DialogBackspace);
-		// ESC：没开对话框时开关设置菜单，开了就取消对话（在 OnEscapePressed 里分发）
+		// Esc：没开对话框时开关设置菜单，开了就取消对话（在 OnEscapePressed 里分发）
 		PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &AstudyCharacter::OnEscapePressed);
+
+		// 对话列表翻页（工艺品卖货 / 听泉鉴宝）：↑↓ 一件一件，PageUp/Down 一页
+		PlayerInputComponent->BindKey(EKeys::Up, IE_Pressed, this, &AstudyCharacter::DialogScrollUp);
+		PlayerInputComponent->BindKey(EKeys::Down, IE_Pressed, this, &AstudyCharacter::DialogScrollDown);
+		PlayerInputComponent->BindKey(EKeys::PageUp, IE_Pressed, this, &AstudyCharacter::DialogScrollPageUp);
+		PlayerInputComponent->BindKey(EKeys::PageDown, IE_Pressed, this, &AstudyCharacter::DialogScrollPageDown);
+
+		// 滚轮：对话框的鼠标用户也得能翻（FInputModeGameAndUI 下 Slate 不吃的轴事件会落到这里）
+		PlayerInputComponent->BindAxisKey(EKeys::MouseWheelAxis, this, &AstudyCharacter::DialogScrollAxis);
 
 		// Tab：资产排行（按住看，再按一下关）
 		PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &AstudyCharacter::OnRankPressed);
@@ -377,6 +386,9 @@ void AstudyCharacter::OpenOptionDialog(const FString& Title, const FString& Body
 	DialogOptions = Options;
 	DialogPrompt.Reset();
 	DialogInput.Reset();
+
+	// 新对话默认不可滚：要滚的（每日播报）在这之后自己 SetDialogBodyScrollable(true)
+	bDialogBodyScrollable = false;
 }
 
 void AstudyCharacter::OpenNumberDialog(const FString& Title, const FString& Body, const FString& Prompt, float MaxValue)
@@ -399,6 +411,7 @@ void AstudyCharacter::CloseDialog()
 	DialogInput.Reset();
 	DialogOptions.Reset();
 	DialogMerchant = nullptr;
+	bDialogBodyScrollable = false;
 }
 
 void AstudyCharacter::OnDialogDigit(int32 Digit)
@@ -526,6 +539,47 @@ void AstudyCharacter::DialogChoose(int32 Index)
 	{
 		M->OnDialogOption(this, Index);
 	}
+}
+
+void AstudyCharacter::DialogScroll(int32 Delta)
+{
+	// 只有"选项列表"能翻；填数字的页面（报含金量 / 卖多少克）翻页没意义
+	if (DialogMode != EDialogMode::Options || Delta == 0)
+	{
+		return;
+	}
+
+	AMerchant* M = DialogMerchant;
+	if (M)
+	{
+		M->OnDialogScroll(this, Delta);
+		return;
+	}
+
+	// 没有商人（每日播报这种）：翻页 = 滚正文
+	if (bDialogBodyScrollable)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			if (ABagHUD* HUD = Cast<ABagHUD>(PC->GetHUD()))
+			{
+				HUD->ScrollDialogBody(Delta * 48.f);
+			}
+		}
+	}
+}
+
+void AstudyCharacter::DialogScrollAxis(float Value)
+{
+	// 一次滚轮事件最多走一件：有的鼠标一档报 1.0，有的报 3.0，
+	// 直接拿 Value 当步长会让"滚一格跳三件"。
+	if (FMath::Abs(Value) < 0.01f)
+	{
+		return;
+	}
+
+	// 往上滚 = 看前面的（列表往上的方向）
+	DialogScroll(Value > 0.f ? -1 : 1);
 }
 
 void AstudyCharacter::StudyTestShelf(int32 Count)

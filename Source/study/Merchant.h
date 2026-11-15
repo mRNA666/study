@@ -66,8 +66,14 @@ public:
 	/** 0 = 正常对话框；1 = 黑市卖货列表；2 = 正规买家卖货列表 */
 	int32 CraftFlow = 0;
 
-	/** 当前卖货列表里的候选（背包下标） */
+	/** 当前卖货列表里的候选（背包下标，只装**当前这一页**的几件） */
 	TArray<int32> CraftCandidates;
+
+	/** 工艺品列表的翻页起点（0 起；0 = 从头看）。卖货页和鉴宝页共用 */
+	int32 ListScroll = 0;
+
+	/** 听泉鉴宝：全部没鉴定的下标（翻页时按 ListScroll 切片） */
+	TArray<int32> AppraiseCandidates;
 
 	/** 正在报价的那一件（背包下标，-1 = 没在报） */
 	int32 PendingCraftSell = -1;
@@ -115,12 +121,18 @@ public:
 	/** 玩家在第二行数字输入框确认（掺黄铜那页） */
 	virtual void OnDialogNumber2(AstudyCharacter* Character, float Value);
 
+	/**
+	 * 列表翻页（Delta = +1 下一件 / -1 上一件 / ±5 整页）。
+	 * 只有"卖工艺品"和"听泉鉴宝"这两个列表会响应，其它对话忽略。
+	 */
+	void OnDialogScroll(AstudyCharacter* Character, int32 Delta);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 	/** 把玩家的金重按黑市价卖出指定克数 */
-	/** 列出可卖的工艺品（最多 3 件） */
+	/** 列出可卖的工艺品（一页 5 件，↑↓ / 滚轮翻页） */
 	void BuildCraftSellList(AstudyCharacter* Character, bool bToLegit);
 
 	/** 卖货列表里的选项回调 */
