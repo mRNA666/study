@@ -90,6 +90,24 @@ void AstudyCharacter::BeginPlay()
 		Cam->SetRelativeLocation(CameraOffset);
 	}
 
+	// 【美术资源缺失时的降级】
+	// 仓库里不带角色模型（Content/Characters 在 .gitignore 里，1 亿多字节没必要上传）。
+	// 第一人称模板的相机是挂在 FirstPersonMesh 的 "head" 骨骼上的：没有网格就没有骨骼，
+	// 相机会退回组件原点 —— 也就是掉到膝盖以下看世界，看着像坏了，其实移动/挖矿全都正常。
+	// 这里退化成"直接把相机钉在胶囊上的眼睛高度"，保证别人 clone 下来视角是对的，只是没有手。
+	if (FirstPersonMesh && FirstPersonMesh->GetSkeletalMeshAsset() == nullptr)
+	{
+		if (UCameraComponent* Cam = GetFirstPersonCameraComponent())
+		{
+			Cam->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+			Cam->SetRelativeLocation(FVector(0.f, 0.f, BaseEyeHeight));
+			Cam->SetRelativeRotation(FRotator::ZeroRotator);
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Character] 没有第一人称网格（仓库不带角色模型），相机已降级挂到胶囊眼睛高度；移动/挖矿不受影响。"));
+	}
+
 	// 头灯参数走 UPROPERTY，方便在角色蓝图里调
 	if (HeadLight)
 	{
