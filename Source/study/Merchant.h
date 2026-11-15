@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -6,7 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "Merchant.generated.h"
 
-class USkeletalMeshComponent;
+class UStaticMeshComponent;
 class AstudyCharacter;
 
 /** 商人的职能 */
@@ -54,9 +54,9 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** 身体（白色机器人） */
+	/** 身体（B 方案：引擎自带的 Cube，零项目素材依赖） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Merchant")
-	TObjectPtr<USkeletalMeshComponent> Body;
+	TObjectPtr<UStaticMeshComponent> Body;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
 	EMerchantKind Kind = EMerchantKind::BuyMineRight;

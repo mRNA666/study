@@ -8,7 +8,9 @@
 #include "studyGameMode.h"
 #include "StudySounds.h"
 #include "BagHUD.h"
-#include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SceneComponent.h"
+#include "Engine/StaticMesh.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -27,17 +29,26 @@ AMerchant::AMerchant()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
-	Body = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Body"));
-	SetRootComponent(Body);
+	// 【B 方案】身体不依赖任何项目内模型，只用引擎自带的 Cube ——
+	// 这样别人 clone 下来就能看见商人。原来引用的是
+	// /Game/Characters/Mannequins/.../SKM_Manny_Simple，而 Content/Characters 在 .gitignore 里，
+	// 仓库里没有那个网格 → clone 后 ConstructorHelpers 失败，商人变成一个看不见的空 actor。
+	//
+	// 结构：SceneRoot 在脚下（actor 原点 = 地面），Cube 子组件抬 90cm 当身体。
+	USceneComponent* SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	SetRootComponent(SceneRoot);
 
-	// 模型在构造函数里就指定 —— 这样在编辑器的视口里也能看见，方便手动摆放。
-	// （之前是在 BeginPlay 里 LoadObject，编辑器里就只有一个空组件）
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyMesh(
-		TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple"));
+	Body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
+	Body->SetupAttachment(SceneRoot);
+	Body->SetRelativeLocation(FVector(0.f, 0.f, 90.f));		// 100cm 高的圆柱，中心抬到 90
+	Body->SetRelativeScale3D(FVector(0.3f, 0.3f, 1.8f));	// → 直径 60 × 高 180，人形比例
 
-	if (MannyMesh.Succeeded())
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(
+		TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
+	if (CylinderMesh.Succeeded())
 	{
-		Body->SetSkeletalMeshAsset(MannyMesh.Object);
+		Body->SetStaticMesh(CylinderMesh.Object);
 	}
 
 	// 挡路用：玩家不能从商人身体里穿过去
