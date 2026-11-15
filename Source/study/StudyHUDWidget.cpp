@@ -255,7 +255,7 @@ void UStudyHUDWidget::BuildLayout()
 
 		NumberSubmitButton = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
 		NumberSubmitButton->AddChild(
-			MakeText(WidgetTree, TEXT("确认卖出"), 18, FLinearColor(0.06f, 0.06f, 0.06f, 1.f), true));
+			MakeText(WidgetTree, TEXT("确 认"), 18, FLinearColor(0.06f, 0.06f, 0.06f, 1.f), true));
 		NumberSubmitButton->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnNumberSubmit);
 		if (UHorizontalBoxSlot* S = Cast<UHorizontalBoxSlot>(NumberRow->AddChildToHorizontalBox(NumberSubmitButton)))
 		{
@@ -267,6 +267,69 @@ void UStudyHUDWidget::BuildLayout()
 		{
 			S->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
 		}
+
+		// 第二个行内输入：掺黄铜那页要同时填"卖多少 g"和"掺多少 g"
+		NumberRow2 = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+
+		NumberRow2->AddChildToHorizontalBox(
+			MakeText(WidgetTree, TEXT("掺"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true));
+
+		NumberBox2 = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
+		NumberBox2->SetHintText(FText::FromString(TEXT("黄铜克数")));
+		{
+			USizeBox* BrassBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+			BrassBox->SetWidthOverride(130.f);
+			BrassBox->AddChild(NumberBox2);
+
+			if (UHorizontalBoxSlot* S = Cast<UHorizontalBoxSlot>(NumberRow2->AddChildToHorizontalBox(BrassBox)))
+			{
+				S->SetPadding(FMargin(8.f, 0.f, 8.f, 0.f));
+			}
+		}
+
+		NumberRow2->AddChildToHorizontalBox(
+			MakeText(WidgetTree, TEXT("g"), 20, FLinearColor(0.85f, 0.87f, 0.92f, 1.f), true));
+
+		NumberSubmitButton2 = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass());
+		NumberSubmitButton2->AddChild(
+			MakeText(WidgetTree, TEXT("确认掺入"), 18, FLinearColor(0.06f, 0.06f, 0.06f, 1.f), true));
+		NumberSubmitButton2->OnClicked.AddDynamic(this, &UStudyHUDWidget::OnNumberSubmit2);
+		if (UHorizontalBoxSlot* S = Cast<UHorizontalBoxSlot>(NumberRow2->AddChildToHorizontalBox(NumberSubmitButton2)))
+		{
+			S->SetPadding(FMargin(14.f, 0.f, 0.f, 0.f));
+		}
+
+		NumberRow2->SetVisibility(ESlateVisibility::Collapsed);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(NumberRow2)))
+		{
+			S->SetPadding(FMargin(0.f, 0.f, 0.f, 10.f));
+		}
+
+		// 输入框要一眼看得见：默认样式的灰底灰字在这个面板上几乎消失。
+		// 改成金色底 + 近黑字 + 更大字号（背景色是 FEditableTextBoxStyle 里的 BackgroundColor）。
+		auto StyleUpTextBox = [](UEditableTextBox* InputBox)
+		{
+			if (!InputBox)
+			{
+				return;
+			}
+
+			FEditableTextBoxStyle Style = InputBox->WidgetStyle;
+			Style.BackgroundColor = FLinearColor(0.96f, 0.80f, 0.32f, 1.f);
+			Style.ForegroundColor = FLinearColor(0.06f, 0.06f, 0.06f, 1.f);
+			Style.FocusedForegroundColor = FLinearColor(0.02f, 0.02f, 0.02f, 1.f);
+			Style.ReadOnlyForegroundColor = FLinearColor(0.12f, 0.12f, 0.12f, 1.f);
+			Style.TextStyle.ColorAndOpacity = FSlateColor(FLinearColor(0.06f, 0.06f, 0.06f, 1.f));
+			Style.TextStyle.Font = Font(22, true);
+			Style.Padding = FMargin(12.f, 6.f);
+			InputBox->WidgetStyle = Style;
+
+			InputBox->SetForegroundColor(FLinearColor(0.06f, 0.06f, 0.06f, 1.f));
+			InputBox->SetJustification(ETextJustify::Center);
+		};
+
+		StyleUpTextBox(NumberBox);
+		StyleUpTextBox(NumberBox2);
 
 		// 不放开「关闭」按钮：商人自己都有"算了 / 不买了"，
 		// 想直接走开就按 E（或 Esc）
@@ -370,7 +433,8 @@ void UStudyHUDWidget::Refresh()
 	{
 		const int32 Total = FMath::FloorToInt(GS->GetClockMinutes());
 		ClockText->SetText(FText::FromString(
-			FString::Printf(TEXT("第 %d 天    %02d:%02d"), GS->GetDayIndex(), Total / 60, Total % 60)));
+			FString::Printf(TEXT("第 %d/%d 天    %02d:%02d"),
+				GS->GetDayIndex(), UstudyGameInstance::TotalDays, Total / 60, Total % 60)));
 
 		if (GS->GetMineStopClock() > 0.f)
 		{
@@ -447,9 +511,9 @@ void UStudyHUDWidget::Refresh()
 		}
 		else if (const ADropItem* Drop = Character->GetFocusedDrop())
 		{
-			// 档位词 + 重量：给「要不要捡」的依据，但不报精确百分比（保住「挖出来才知道」）
-			Hint = FString::Printf(TEXT("按  E  拾取      %.1f kg   %s"),
-				Drop->WeightKg, *ADropItem::GoldGradeWord(Drop->GoldContent));
+			// 只报档位词，不报重量也不报精确百分比：
+			// 报重量会让"捡不捡"退化成算数，报百分比会毁掉"挖出来才知道"的赌感。
+			Hint = FString::Printf(TEXT("按  E  拾取      %s"), *ADropItem::GoldGradeWord(Drop->GoldContent));
 		}
 		if (AMerchant* M = Character->GetNearbyMerchant())
 		{
@@ -625,6 +689,55 @@ void UStudyHUDWidget::Refresh()
 			{
 				const bool bShowNumber = (Character->GetDialogGoldHeld() > 0.f);
 				NumberRow->SetVisibility(bShowNumber ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+				// 由隐到显 = 换了一页：清空上一次的字，让商人重新预填
+				if (bShowNumber && !bNumberRowVisible)
+				{
+					if (NumberBox)
+					{
+						NumberBox->SetText(FText::GetEmpty());
+					}
+					AppliedPrefill1 = -1;
+				}
+				bNumberRowVisible = bShowNumber;
+
+				// 商人要求预填（例如填超了，改成最大值）
+				if (NumberBox && bShowNumber)
+				{
+					const int32 Ver = Character->GetDialogNumberPrefillVersion(false);
+					if (Ver != AppliedPrefill1)
+					{
+						AppliedPrefill1 = Ver;
+						NumberBox->SetText(FText::FromString(Character->GetDialogNumberPrefill(false)));
+					}
+				}
+			}
+
+			// 第二行（掺黄铜）
+			if (NumberRow2)
+			{
+				const bool bShowNumber2 = (Character->GetDialogGoldHeld2() > 0.f);
+				NumberRow2->SetVisibility(bShowNumber2 ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+
+				if (bShowNumber2 && !bNumberRow2Visible)
+				{
+					if (NumberBox2)
+					{
+						NumberBox2->SetText(FText::GetEmpty());
+					}
+					AppliedPrefill2 = -1;
+				}
+				bNumberRow2Visible = bShowNumber2;
+
+				if (NumberBox2 && bShowNumber2)
+				{
+					const int32 Ver2 = Character->GetDialogNumberPrefillVersion(true);
+					if (Ver2 != AppliedPrefill2)
+					{
+						AppliedPrefill2 = Ver2;
+						NumberBox2->SetText(FText::FromString(Character->GetDialogNumberPrefill(true)));
+					}
+				}
 			}
 		}
 	}
@@ -658,6 +771,20 @@ void UStudyHUDWidget::OnNumberSubmit()
 
 	const float Value = FCString::Atof(*NumberBox->GetText().ToString());
 	Character->DialogSubmitNumber(Value);
+}
+
+void UStudyHUDWidget::OnNumberSubmit2()
+{
+	UGameplayStatics::PlaySound2D(this, StudySounds::Click(), 0.8f);
+
+	AstudyCharacter* Character = GetStudyCharacter();
+	if (!Character || !NumberBox2)
+	{
+		return;
+	}
+
+	const float Value = FCString::Atof(*NumberBox2->GetText().ToString());
+	Character->DialogSubmitNumber2(Value);
 }
 
 void UStudyHUDWidget::OnDialogClose()

@@ -38,6 +38,7 @@ public:
 	UFUNCTION() void OnOption3() { ChooseOption(2); }
 	UFUNCTION() void OnOption4() { ChooseOption(3); }
 	UFUNCTION() void OnNumberSubmit();
+	UFUNCTION() void OnNumberSubmit2();
 	UFUNCTION() void OnDialogClose();
 
 protected:
@@ -96,6 +97,9 @@ protected:
 	UPROPERTY() TObjectPtr<UEditableTextBox> NumberBox;
 	UPROPERTY() TObjectPtr<UButton> NumberSubmitButton;
 	UPROPERTY() TObjectPtr<class UHorizontalBox> NumberRow;
+	UPROPERTY() TObjectPtr<UEditableTextBox> NumberBox2;
+	UPROPERTY() TObjectPtr<UButton> NumberSubmitButton2;
+	UPROPERTY() TObjectPtr<class UHorizontalBox> NumberRow2;
 	UPROPERTY() TObjectPtr<UButton> CloseButton;
 
 	UPROPERTY() TArray<TObjectPtr<UButton>> OptionButtons;
@@ -126,4 +130,12 @@ protected:
 
 	/** 上一帧输入框的单位（g / %），变了才改文字 */
 	FString LastNumberUnit;
+
+	/** 输入框预填：记住已经应用过的版本号，避免每帧覆盖玩家正在敲的字 */
+	int32 AppliedPrefill1 = -1;
+	int32 AppliedPrefill2 = -1;
+
+	/** 上一帧这两行输入框是不是可见（由隐到显时清空，开新页面不带上次的字） */
+	bool bNumberRowVisible = false;
+	bool bNumberRow2Visible = false;
 };

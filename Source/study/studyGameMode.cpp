@@ -182,8 +182,8 @@ void AstudyGameMode::SpawnCampMerchants()
 	SpawnOne(EMerchantKind::SellGold, TEXT("黑市金商"), FVector(-350.f, 250.f, 0.f));
 	SpawnOne(EMerchantKind::Bed, TEXT("床"), FVector(0.f, -350.f, 0.f));
 
-	// 正规买家：第 2 天才出现（第 1 天他"还没来"）
-	if (GetStudyGameState() && GetStudyGameState()->GetDayIndex() >= 2)
+	// 正规买家：每两天来一趟（PRD §2.9：第 2/4/6/8/10/12 天）
+	if (GetStudyGameState() && GetStudyGameState()->GetDayIndex() % 2 == 0)
 	{
 		SpawnOne(EMerchantKind::LegitBuyer, TEXT("正规买家"), FVector(0.f, 450.f, 0.f));
 	}
@@ -364,6 +364,20 @@ void AstudyGameMode::Tick(float DeltaSeconds)
 		GS->TickNotice(DeltaSeconds);
 	}
 
+	// 睡醒后的「昨日播报」：等角色就绪、且没有别的对话框时弹出来，弹完就清
+	if (GI && !GI->PendingReport.IsEmpty())
+	{
+		if (AstudyCharacter* Char = Cast<AstudyCharacter>(UGameplayStatics::GetPlayerCharacter(this, 0)))
+		{
+			if (!Char->IsDialogOpen() && !Char->IsTransitioning())
+			{
+				const FString Report = GI->PendingReport;
+				GI->PendingReport.Reset();
+				Char->OpenOptionDialog(TEXT("醒 了"), Report, { TEXT("知道了") });
+			}
+		}
+	}
+
 	if (!GS || !GI || GS->GetPhase() != EGamePhase::InProgress)
 	{
 		return;
@@ -455,12 +469,9 @@ void AstudyGameMode::EndMatch()
 		return;
 	}
 
-	// 剩下没卖的金重按黑市收购价（PRD §2.9：好感度"熟人"档 65%）折算进现金
+	// 剩下没卖的金重按当时的黑市到手价折算（含日价 + 砸价 + 好感度）
 	const float UnsoldGrams = GI->GoldGrams;
-	const int32 UnsoldCash = FMath::RoundToInt(
-		UnsoldGrams
-		* AstudyGameState::BlackMarketRate
-		* static_cast<float>(AstudyGameState::BasePricePerGram));
+	const int32 UnsoldCash = FMath::RoundToInt(UnsoldGrams * GI->GetFencePricePerGram());
 
 	GI->Cash += UnsoldCash;
 	GI->GoldGrams = 0.f;

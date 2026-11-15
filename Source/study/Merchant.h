@@ -54,9 +54,9 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/** 身体（B 方案：引擎自带的 Cube，零项目素材依赖） */
+	/** 身体（B 方案：引擎自带的圆柱，零项目素材依赖） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Merchant")
-	TObjectPtr<UStaticMeshComponent> Body;
+	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Merchant")
 	EMerchantKind Kind = EMerchantKind::BuyMineRight;
@@ -112,6 +112,9 @@ public:
 	/** 玩家输入数字并确认 */
 	virtual void OnDialogNumber(AstudyCharacter* Character, float Value);
 
+	/** 玩家在第二行数字输入框确认（掺黄铜那页） */
+	virtual void OnDialogNumber2(AstudyCharacter* Character, float Value);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -133,6 +136,51 @@ protected:
 
 	/** 卖给正规买家：全额，但要吃配额 */
 	void SellGoldLegit(float Grams);
+
+	// ---------------- 掺假（卖黄金的两级页面） ----------------
+
+	/**
+	 * 卖黄金的流程（黑市和正规买家共用）：
+	 *   0 = 正常菜单
+	 *   1 = 入口页：老老实实卖 / 掺点黄铜卖 / 上一步
+	 *   2 = 老实卖页：全部 / 填克数 / 上一步
+	 *   3 = 掺着卖页：第一行填卖多少 g、第二行填掺多少 g，两个都填了才能卖
+	 */
+	int32 SellFlow = 0;
+
+	/** 掺入的黄铜克数（掺着卖页） */
+	float PendingBrass = 0.f;
+
+	/** 掺着卖页：第一行（卖多少 g）填了吗 */
+	bool bSellGramsFilled = false;
+
+	/** 掺着卖页：第二行（掺多少 g）填了吗 */
+	bool bBrassFilled = false;
+
+	/** 掺着卖页：第一行的值 */
+	float PendingSellGrams = 0.f;
+
+	/** 填超了的时候要显示在页面顶部的一句警告（显示一次就清空） */
+	FString SellWarning;
+
+	/** 打开「卖黄金」入口页（三个选项） */
+	void OpenGoldSellPage(AstudyCharacter* Character);
+
+	/** 老实卖页 */
+	void BuildHonestSellPage(AstudyCharacter* Character);
+
+	/** 掺着卖页（两行输入） */
+	void BuildAdulteratedSellPage(AstudyCharacter* Character);
+
+	/** 真正结算：黑市（bToLegit=false）走掂量 + 抽查，正规买家走抽检 */
+	void SettleGoldSale(AstudyCharacter* Character, float SellGrams, float BrassGrams, bool bToLegit);
+
+	/**
+	 * 只弹一条「知道了」，点完就结束，不再回到菜单。
+	 * 关键：把 DialogMerchant 清空 —— 否则点「知道了」会被当成又点了菜单第 0 项，
+	 * 于是卖完黄金/工艺品之后会莫名其妙弹出"你身上没金子"。
+	 */
+	void ShowResult(AstudyCharacter* Character, const FString& Body);
 
 	/** 尝试买一次开采权并传送进矿洞。返回 false = 钱不够 */
 	bool BuyMineRight();

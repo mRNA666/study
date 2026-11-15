@@ -447,7 +447,7 @@ void AstudyCharacter::DialogConfirm()
 	AMerchant* M = DialogMerchant;
 	CloseDialog();
 
-	if (M && Value > 0.f)
+	if (M && Value >= 0.f)
 	{
 		M->OnDialogNumber(this, Value);
 	}
@@ -455,14 +455,56 @@ void AstudyCharacter::DialogConfirm()
 
 void AstudyCharacter::DialogSubmitNumber(float Value)
 {
-	// 行内输入：不关对话 —— 让商人自己决定要不要重刷一遍内容
+	// 行内输入：不关对话 —— 让商人自己决定要不要重刷一遍内容。
+	// 允许 0：卖黄金那个页面里，"掺 0 克黄铜"是一个合法输入。
 	AMerchant* M = DialogMerchant;
-	if (!M || Value <= 0.f)
+	if (!M || Value < 0.f)
 	{
 		return;
 	}
 
 	M->OnDialogNumber(this, Value);
+}
+
+void AstudyCharacter::DialogSubmitNumber2(float Value)
+{
+	AMerchant* M = DialogMerchant;
+	if (!M || Value < 0.f)
+	{
+		return;
+	}
+
+	M->OnDialogNumber2(this, Value);
+}
+
+void AstudyCharacter::SetDialogNumberPrefill(float Value, bool bSecond)
+{
+	// 整数就不显示小数点，10.0 g 看着别扭
+	const bool bWhole = FMath::IsNearlyEqual(Value, FMath::RoundToFloat(Value), 0.05f);
+	const FString Text = bWhole
+		? FString::Printf(TEXT("%.0f"), Value)
+		: FString::Printf(TEXT("%.1f"), Value);
+
+	if (bSecond)
+	{
+		NumberPrefill2 = Text;
+		++NumberPrefillVer2;
+	}
+	else
+	{
+		NumberPrefill1 = Text;
+		++NumberPrefillVer1;
+	}
+}
+
+const FString& AstudyCharacter::GetDialogNumberPrefill(bool bSecond) const
+{
+	return bSecond ? NumberPrefill2 : NumberPrefill1;
+}
+
+int32 AstudyCharacter::GetDialogNumberPrefillVersion(bool bSecond) const
+{
+	return bSecond ? NumberPrefillVer2 : NumberPrefillVer1;
 }
 
 void AstudyCharacter::DialogCancel()

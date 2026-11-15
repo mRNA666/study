@@ -352,11 +352,29 @@ public:
 	/** 数字输入框按"确认" */
 	void DialogSubmitNumber(float Value);
 
+	/** 第二行数字输入框按"确认"（掺黄铜那页） */
+	void DialogSubmitNumber2(float Value);
+
+	/**
+	 * 商人调用：把输入框预填成某个值（填超了的时候，商人会把它改成最大值）。
+	 * 用版本号通知 HUD，避免每帧覆盖玩家正在敲的字。
+	 */
+	void SetDialogNumberPrefill(float Value, bool bSecond = false);
+
+	const FString& GetDialogNumberPrefill(bool bSecond) const;
+	int32 GetDialogNumberPrefillVersion(bool bSecond) const;
+
 	/** 数字输入框的上限（卖金时 = 手上的金重）。> 0 时对话框里会出现行内输入行 */
 	float GetDialogGoldHeld() const { return DialogMaxValue; }
 
+	/** 第二行输入框的上限（掺黄铜那页用两行：卖多少 g / 掺多少 g） */
+	float GetDialogGoldHeld2() const { return DialogMaxValue2; }
+
 	/** 商人调用：开启 / 关闭对话框里的"行内数字输入"（0 = 关闭） */
 	void SetDialogNumberEnabled(float MaxValue) { DialogMaxValue = FMath::Max(MaxValue, 0.f); }
+
+	/** 商人调用：开启 / 关闭第二行输入框（0 = 关闭） */
+	void SetDialogNumberEnabled2(float MaxValue) { DialogMaxValue2 = FMath::Max(MaxValue, 0.f); }
 
 	/** 附近可交互的商人（HUD 提示用） */
 	AMerchant* GetNearbyMerchant() const { return FindNearbyMerchant(); }
@@ -371,6 +389,13 @@ protected:
 	FString DialogPrompt;
 	FString DialogInput;			// 玩家已经敲进去的数字
 	float DialogMaxValue = 0.f;		// 输入上限（卖金用）
+	float DialogMaxValue2 = 0.f;	// 第二行输入上限（掺黄铜用）
+
+	/** 输入框预填值 + 版本号（版本号变了 HUD 才写入一次） */
+	FString NumberPrefill1;
+	FString NumberPrefill2;
+	int32 NumberPrefillVer1 = 0;
+	int32 NumberPrefillVer2 = 0;
 
 	TArray<FString> DialogOptions;
 

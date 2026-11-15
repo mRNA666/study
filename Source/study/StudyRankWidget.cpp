@@ -190,8 +190,32 @@ void UStudyRankWidget::Refresh()
 		if (List.IsValidIndex(i))
 		{
 			const FEntry& E = List[i];
-			RowTexts[i]->SetText(FText::FromString(
-				FString::Printf(TEXT("%d.  %-6s  %d"), i + 1, *E.Name, E.Asset)));
+
+			if (E.bMe)
+			{
+				// 自己那一栏给精确值
+				RowTexts[i]->SetText(FText::FromString(
+					FString::Printf(TEXT("%d.  %-6s  %d"), i + 1, *E.Name, E.Asset)));
+			}
+			else
+			{
+				// 别人的资产只给区间（PRD §2.2：名次精确、金额模糊）
+				const int32 Lo = FMath::RoundToInt(E.Asset * 0.85f / 1000.f) * 1000;
+				const int32 Hi = FMath::RoundToInt(E.Asset * 1.15f / 1000.f) * 1000;
+
+				if (Hi >= 10000)
+				{
+					RowTexts[i]->SetText(FText::FromString(FString::Printf(
+						TEXT("%d.  %-6s  约 %.1f~%.1f 万"),
+						i + 1, *E.Name, Lo / 10000.f, Hi / 10000.f)));
+				}
+				else
+				{
+					RowTexts[i]->SetText(FText::FromString(FString::Printf(
+						TEXT("%d.  %-6s  约 %d~%d"), i + 1, *E.Name, Lo, Hi)));
+				}
+			}
+
 			RowTexts[i]->SetColorAndOpacity(FSlateColor(E.bMe ? Gold : White));
 		}
 		else

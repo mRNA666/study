@@ -3,6 +3,7 @@
 
 #include "studyGameInstance.h"
 #include "studyCharacter.h"
+#include "studyGameState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 
@@ -23,6 +24,15 @@ void UstudyGameInstance::ResetRun()
 	// 重开一局 → 开场主菜单重新弹一次
 	bMainMenuDone = false;
 
+	// 掺假 / 播报相关状态
+	FenceFavor = 60;
+	FenceStrictness = 0.f;
+	TodayFeed.Reset();
+	PendingReport.Reset();
+	RankYesterday = 0;
+	bBuyerFirstPass = true;
+	bBuyerRejectedToday = false;
+
 	// 对手也要重新开局
 	InitRivals();
 
@@ -35,12 +45,18 @@ void UstudyGameInstance::ResetRun()
 
 void UstudyGameInstance::SleepToNextDay()
 {
+	// 先播报：这时候 DayIndex 还是"刚结束的那天"
+	ComposeMorningReport();
+
 	DayIndex++;
 	ClockMinutes = DayStartMinutes;
 	RightsBoughtToday = 0;
 	BuyerQuotaGrams = BuyerQuotaPerDay;		// 正规买家第二天又有配额
+	bBuyerRejectedToday = false;
+	RollDailyStrictness();
 
-	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00"), DayIndex);
+	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00（黑商严格度 %.2f）"),
+		DayIndex, FenceStrictness);
 }
 
 void UstudyGameInstance::ClampClock()
@@ -196,6 +212,10 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 					*UstudyGameInstance::GetCategoryName(Bought.Item.Category),
 					R.Cash, R.Handicraft.Num());
 
+				PushFeed(FString::Printf(TEXT("%s 花 %d 币把%s抱走了"),
+					*R.Name, Bought.Item.Price,
+					*UstudyGameInstance::GetCategoryName(Bought.Item.Category)));
+
 				R.NextActionAt = RivalClock + FMath::FRandRange(60.f, 150.f);
 				continue;
 			}
@@ -212,6 +232,9 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 
 			UE_LOG(LogTemp, Log, TEXT("[Rival] %s 把 %s 卖给正规买家 → %d 币（现金 %d）"),
 				*R.Name, *UstudyGameInstance::GetCategoryName(SoldIt.Category), Earned, R.Cash);
+
+			PushFeed(FString::Printf(TEXT("%s 把%s出手了"), *R.Name,
+				*UstudyGameInstance::GetCategoryName(SoldIt.Category)));
 
 			R.NextActionAt = RivalClock + FMath::FRandRange(40.f, 90.f);
 			continue;
@@ -267,6 +290,8 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 				}
 				UE_LOG(LogTemp, Log, TEXT("[Rival] %s 卖了 %.1f g（x%.2f）→ 现金 %d"),
 					*R.Name, Sold, Rate, R.Cash);
+
+				PushFeed(FString::Printf(TEXT("%s 卖了 %.1f g"), *R.Name, Sold));
 			}
 
 			// 下一次行动的间隔（性格不同）
@@ -297,14 +322,18 @@ namespace
 
 	const FCategoryRange GCategoryRanges[] =
 	{
-		{ TEXT("金锁"),   10.f,  40.f },
-		{ TEXT("金面具"), 20.f,  60.f },
-		{ TEXT("金蛋"),   20.f,  60.f },
-		{ TEXT("金蟾"),   50.f, 120.f },
-		{ TEXT("金杯"),   60.f, 150.f },
-		{ TEXT("金盾"),   80.f, 200.f },
-		{ TEXT("金灯"),   80.f, 200.f },
-		{ TEXT("金像"),  250.f, 600.f },
+		// 【v3.21】整体 ÷4：原来金像是 250~600 g，一件卖 9 万多币，
+		// 而玩家一天净赚 1~2 万 —— 8 件里 5 件整局都买不起，柜台等于只有 3 件。
+		// 缩到 1/4 后：小件（金锁 3~10 g）第 1 天就买得起，大件（金像 62~150 g）天然
+		// 留到第 2 天 —— 不需要再按天数硬锁，现金自己就是门槛。
+		{ TEXT("金锁"),    3.f,  10.f },
+		{ TEXT("金面具"),  5.f,  15.f },
+		{ TEXT("金蛋"),    5.f,  15.f },
+		{ TEXT("金蟾"),   12.f,  30.f },
+		{ TEXT("金杯"),   15.f,  38.f },
+		{ TEXT("金盾"),   20.f,  50.f },
+		{ TEXT("金灯"),   20.f,  50.f },
+		{ TEXT("金像"),   62.f, 150.f },
 	};
 
 	const TCHAR* GPitches[] =
@@ -492,4 +521,217 @@ void UstudyGameInstance::RefillShelfIfNeeded()
 
 	UE_LOG(LogTemp, Log, TEXT("[Shelf] 第 %d 天的货架已生成（%d 件），黑市基础价 %.0f%%"),
 		DayIndex, Shelf.Num(), BlackMarketDailyRate * 100.f);
+}
+
+// ==================== 掺假 / 好感度 / 播报 ====================
+
+float UstudyGameInstance::GetFavorFactor() const
+{
+	// PRD §2.9 四档收购价 68 / 65 / 58 / 50，除以基准 65 得到乘数
+	if (FenceFavor >= 80) { return 1.046f; }	// 老主顾
+	if (FenceFavor >= 55) { return 1.000f; }	// 熟人
+	if (FenceFavor >= 30) { return 0.892f; }	// 生面孔
+	return 0.769f;								// 麻烦精
+}
+
+int32 UstudyGameInstance::GetFavorPercent() const
+{
+	if (FenceFavor >= 80) { return 68; }
+	if (FenceFavor >= 55) { return 65; }
+	if (FenceFavor >= 30) { return 58; }
+	return 50;
+}
+
+FString UstudyGameInstance::GetFavorLabel() const
+{
+	if (FenceFavor >= 80) { return TEXT("老主顾"); }
+	if (FenceFavor >= 55) { return TEXT("熟人"); }
+	if (FenceFavor >= 30) { return TEXT("生面孔"); }
+	return TEXT("麻烦精");
+}
+
+float UstudyGameInstance::GetFencePricePerGram() const
+{
+	// 顺序固定：正规基准价 × 当天基础价 × 抛售砸价 × 好感系数（PRD §2.9 硬约束）
+	return static_cast<float>(AstudyGameState::BasePricePerGram)
+		* BlackMarketDailyRate
+		* BlackMarketMultiplier
+		* GetFavorFactor();
+}
+
+void UstudyGameInstance::RollDailyStrictness()
+{
+	// 第 1 天永不抽查（PRD 新手保护）
+	FenceStrictness = (DayIndex <= 1) ? 0.f : FMath::FRandRange(0.05f, 1.f);
+}
+
+FString UstudyGameInstance::GetStrictnessHint() const
+{
+	if (FenceStrictness < 0.10f) { return TEXT("他今天在打瞌睡，称得松"); }
+	if (FenceStrictness < 0.40f) { return TEXT("跟平时一样，称得不算细"); }
+	if (FenceStrictness < 0.75f) { return TEXT("他今天手挺勤，翻来覆去地看"); }
+	return TEXT("他今天一直盯着秤，眼睛没离开过");
+}
+
+float UstudyGameInstance::GetAdulterationCatchChance(float BrassGrams) const
+{
+	return GetAdulterationCatchChanceEx(GoldGrams, BrassGrams);
+}
+
+float UstudyGameInstance::GetAdulterationCatchChanceEx(float SellGrams, float BrassGrams) const
+{
+	const float G = FMath::Max(SellGrams, 0.f);
+	if (BrassGrams <= 0.f || G <= 0.f)
+	{
+		return 0.f;
+	}
+
+	// 掺入比例 r = 黄铜 / (真实金重 + 黄铜)。他掂的是"这一包"的手感
+	const float R = BrassGrams / (G + BrassGrams);
+
+	// ---- 第一层：掂量（必做，免费）----
+	// PRD 的锚点：≤15% 掂不出、30% 约四成、>40% 必定被掂出。
+	// 用一条连续曲线穿过这三个点，而不是硬切四档 ——
+	// 这样"掺 18% 和 22%"的体感是连续的，玩家会自己摸出那条线在哪。
+	//   t = (r - 0.15) / 0.25  ，P掂 = t²
+	//   r=0.15 → 0     r=0.30 → 0.36     r=0.40 → 1.0
+	const float T = FMath::Clamp((R - 0.15f) / 0.25f, 0.f, 1.f);
+	const float PWeigh = T * T;
+
+	// ---- 第二层：抽查（按当天严格度）----
+	// PRD 原公式：基础概率 = 严格度 × 掺假比例
+	const float PSpot = FMath::Clamp(FenceStrictness * R, 0.f, 1.f);
+
+	// 两层是"或"的关系，不能直接相加（否则会超过 1）
+	return 1.f - (1.f - PWeigh) * (1.f - PSpot);
+}
+
+FString UstudyGameInstance::GetAdulterationHint(float BrassGrams) const
+{
+	return GetAdulterationHintEx(GoldGrams, BrassGrams);
+}
+
+FString UstudyGameInstance::GetAdulterationHintEx(float SellGrams, float BrassGrams) const
+{
+	const float P = GetAdulterationCatchChanceEx(SellGrams, BrassGrams);
+
+	if (P < 0.10f) { return TEXT("很可能发现不了"); }
+	if (P < 0.30f) { return TEXT("可能被抓"); }
+	if (P < 0.60f) { return TEXT("这很容易被抓"); }
+	return TEXT("这一掂量就能分出来");
+}
+
+void UstudyGameInstance::PushFeed(const FString& Line)
+{
+	if (Line.IsEmpty())
+	{
+		return;
+	}
+
+	// 一天最多留 12 条，免得刷屏
+	if (TodayFeed.Num() < 12)
+	{
+		TodayFeed.Add(Line);
+	}
+}
+
+int32 UstudyGameInstance::GetMyAssetTotal() const
+{
+	int32 Total = Cash + FMath::RoundToInt(
+		(GoldGrams + StashedGoldGrams) * static_cast<float>(AstudyGameState::BasePricePerGram));
+
+	Total += SumCraftValue(HandicraftBag);
+	return Total;
+}
+
+int32 UstudyGameInstance::GetRivalAssetTotal(int32 Index) const
+{
+	if (!Rivals.IsValidIndex(Index))
+	{
+		return 0;
+	}
+
+	const FRivalState& R = Rivals[Index];
+	return R.GetAssetTotal() + SumCraftValue(R.Handicraft);
+}
+
+int32 UstudyGameInstance::GetMyRank() const
+{
+	const int32 Me = GetMyAssetTotal();
+
+	int32 Rank = 1;
+	for (int32 i = 0; i < Rivals.Num(); ++i)
+	{
+		if (GetRivalAssetTotal(i) > Me)
+		{
+			++Rank;
+		}
+	}
+	return Rank;
+}
+
+void UstudyGameInstance::ComposeMorningReport()
+{
+	const int32 FinishedDay = DayIndex;
+	const int32 MyRank = GetMyRank();
+
+	FString Body = FString::Printf(TEXT("第 %d 天 · 收工\n\n"), FinishedDay);
+
+	if (TodayFeed.Num() == 0)
+	{
+		Body += TEXT("· 今天没什么动静，柜台冷冷清清。\n");
+	}
+	else
+	{
+		const int32 MaxLines = 6;
+		for (int32 i = 0; i < TodayFeed.Num() && i < MaxLines; ++i)
+		{
+			Body += FString::Printf(TEXT("· %s\n"), *TodayFeed[i]);
+		}
+
+		if (TodayFeed.Num() > MaxLines)
+		{
+			Body += FString::Printf(TEXT("· …还有 %d 条\n"), TodayFeed.Num() - MaxLines);
+		}
+	}
+
+	// 名次（金额精确是为了自己看着有底，别人的金额在 Tab 里是区间）
+	Body += FString::Printf(TEXT("\n资产 %d 币 · 第 %d 名"), GetMyAssetTotal(), MyRank);
+
+	if (RankYesterday > 0)
+	{
+		if (MyRank < RankYesterday)
+		{
+			Body += FString::Printf(TEXT("（↑%d）"), RankYesterday - MyRank);
+		}
+		else if (MyRank > RankYesterday)
+		{
+			Body += FString::Printf(TEXT("（↓%d）"), MyRank - RankYesterday);
+		}
+		else
+		{
+			Body += TEXT("（没变）");
+		}
+	}
+
+	// 明天会发生什么
+	const int32 NextDay = FinishedDay + 1;
+	if (NextDay <= TotalDays)
+	{
+		Body += FString::Printf(TEXT("\n明天（第 %d 天）："), NextDay);
+		Body += (NextDay % 2 == 0)
+			? TEXT("正规买家开窗口，全场 3000 g 配额；黑市换新货")
+			: TEXT("黑市换新货；正规买家明天才来");
+	}
+	else
+	{
+		Body += TEXT("\n今天是最后一夜了。");
+	}
+
+	PendingReport = Body;
+	TodayFeed.Reset();
+	RankYesterday = MyRank;
+
+	UE_LOG(LogTemp, Log, TEXT("[Report] 第 %d 天收工，我的名次 %d，播报 %d 字"),
+		FinishedDay, MyRank, Body.Len());
 }

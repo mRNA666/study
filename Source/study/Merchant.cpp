@@ -29,31 +29,33 @@ AMerchant::AMerchant()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
-	// 【B 方案】身体不依赖任何项目内模型，只用引擎自带的 Cube ——
+	// 【B 方案】身体不依赖任何项目内模型，只用引擎自带的圆柱 ——
 	// 这样别人 clone 下来就能看见商人。原来引用的是
 	// /Game/Characters/Mannequins/.../SKM_Manny_Simple，而 Content/Characters 在 .gitignore 里，
 	// 仓库里没有那个网格 → clone 后 ConstructorHelpers 失败，商人变成一个看不见的空 actor。
 	//
-	// 结构：SceneRoot 在脚下（actor 原点 = 地面），Cube 子组件抬 90cm 当身体。
+	// 结构：SceneRoot 在脚下（actor 原点 = 地面），圆柱子组件抬 90cm 当身体。
 	USceneComponent* SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(SceneRoot);
 
-	Body = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
-	Body->SetupAttachment(SceneRoot);
-	Body->SetRelativeLocation(FVector(0.f, 0.f, 90.f));		// 100cm 高的圆柱，中心抬到 90
-	Body->SetRelativeScale3D(FVector(0.3f, 0.3f, 1.8f));	// → 直径 60 × 高 180，人形比例
+	// 注意：成员名必须叫 BodyMesh 而不是 Body —— 很多函数里有局部变量 FString Body（对话正文），
+	// 叫 Body 会撞名字（C4458 变量遮蔽），而且读代码时容易看错。
+	BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Body"));
+	BodyMesh->SetupAttachment(SceneRoot);
+	BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, 90.f));		// 100cm 高的圆柱，中心抬到 90
+	BodyMesh->SetRelativeScale3D(FVector(0.3f, 0.3f, 1.8f));	// → 直径 60 × 高 180，人形比例
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(
 		TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 
 	if (CylinderMesh.Succeeded())
 	{
-		Body->SetStaticMesh(CylinderMesh.Object);
+		BodyMesh->SetStaticMesh(CylinderMesh.Object);
 	}
 
 	// 挡路用：玩家不能从商人身体里穿过去
-	Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	Body->SetCollisionResponseToAllChannels(ECR_Block);
+	BodyMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	BodyMesh->SetCollisionResponseToAllChannels(ECR_Block);
 }
 
 void AMerchant::OnConstruction(const FTransform& Transform)
@@ -61,9 +63,9 @@ void AMerchant::OnConstruction(const FTransform& Transform)
 	Super::OnConstruction(Transform);
 
 	// 床不显示机器人：在编辑器里勾了 bHideBody 就立刻生效
-	if (Body)
+	if (BodyMesh)
 	{
-		Body->SetVisibility(!bHideBody);
+		BodyMesh->SetVisibility(!bHideBody);
 	}
 }
 
@@ -102,7 +104,10 @@ void AMerchant::UpdateDayGate()
 		return;
 	}
 
-	const bool bShouldHide = (GI->DayIndex < MinDay);
+	// 正规买家只做双数天（第 2/4/6/8/10/12 天）—— 除了对话里说"明天再来"，人也藏起来
+	const bool bOddDay = (GI->DayIndex % 2) == 1;
+	const bool bShouldHide = (GI->DayIndex < MinDay)
+		|| (Kind == EMerchantKind::LegitBuyer && bOddDay);
 	if (bShouldHide != IsHidden())
 	{
 		SetActorHiddenInGame(bShouldHide);
@@ -130,6 +135,8 @@ bool AMerchant::Interact(AstudyCharacter* Character)
 
 	Character->SetDialogMerchant(this);
 	bBuyFailed = false;
+	SellFlow = 0;
+	PendingBrass = 0.f;
 	BuildDialog(Character);
 	return true;
 }
@@ -168,6 +175,9 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	{
 		return;
 	}
+
+	// 回到主菜单：第二行输入框（掺黄铜）一定收起来；子页面会自己再打开
+	Character->SetDialogNumberEnabled2(0.f);
 
 	// 必须在这里重新认领发起者：
 	// 玩家点一次选项后，DialogChoose 会先 CloseDialog()（那一步把 DialogMerchant 清成了 nullptr），
@@ -267,23 +277,38 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		return;
 	}
 
-	// ---- 正规买家：全额收，每天有配额 ----
+	// ---- 正规买家：全额收，每两天开一次窗口 ----
 	if (Kind == EMerchantKind::LegitBuyer)
 	{
-		const float Sellable = FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams);
-		const int32 Estimate = FMath::RoundToInt(Sellable * static_cast<float>(AstudyGameState::BasePricePerGram));
+		SellFlow = 0;
+		PendingBrass = 0.f;
+		Character->SetDialogNumberEnabled(0.f);
 
-		Character->SetDialogNumberUnit(TEXT("g"));
-		Character->SetDialogNumberEnabled(Sellable);
+		// PRD §2.9：一季 6 场，第 2/4/6/8/10/12 天
+		if (GI->DayIndex % 2 != 0)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("「我今天不收货。明天再来吧。」\n\n（正规买家每两天来一趟）"),
+				{ TEXT("知道了") });
+			return;
+		}
+
+		if (GI->bBuyerRejectedToday)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("「刚才那一包我抽了样，你还是带回去吧。」\n\n（今天这个窗口对你不开了，等下一个窗口）"),
+				{ TEXT("知道了") });
+			return;
+		}
 
 		TArray<FString> Options;
-		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → %d 币，全额）"), Sellable, Estimate));
+		Options.Add(TEXT("卖黄金"));
 		Options.Add(TEXT("卖工艺品"));
 		Options.Add(TEXT("算了"));
 
-		Character->OpenOptionDialog(
-			DisplayName,
-			FString::Printf(TEXT("正规价：100%%（不压价）\n今天还能收：%.1f g\n你手上有：%.1f g\n现金：%d 币"),
+		Character->OpenOptionDialog(DisplayName,
+			FString::Printf(
+				TEXT("正规价：100%%（不压价）\n今天还能收：%.1f g\n你手上有：%.1f g\n现金：%d 币\n\n他每次都抽检，掺了黄铜被抽到这一趟就白跑。"),
 				GI->BuyerQuotaGrams, GI->GoldGrams, GI->Cash),
 			Options);
 		return;
@@ -312,24 +337,23 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 	// ---- 收黄金 ----
 	if (Kind == EMerchantKind::SellGold)
 	{
-		const float EffectiveRate = GI->BlackMarketDailyRate * GI->BlackMarketMultiplier;
-		const int32 Estimate = FMath::RoundToInt(
-			GI->GoldGrams * EffectiveRate * static_cast<float>(AstudyGameState::BasePricePerGram));
-
-		// 打开行内数字输入（框里填"卖多少克"）
-		Character->SetDialogNumberUnit(TEXT("g"));
-		Character->SetDialogNumberEnabled(GI->GoldGrams);
+		SellFlow = 0;
+		PendingBrass = 0.f;
+		Character->SetDialogNumberEnabled(0.f);		// 主菜单不显示输入框，进「卖黄金」页才有
 
 		TArray<FString> Options;
-		Options.Add(FString::Printf(TEXT("全部卖掉（%.1f g → 约 %d 币）"), GI->GoldGrams, Estimate));
+		Options.Add(TEXT("卖黄金"));
 		Options.Add(TEXT("购买工艺品（看看柜台）"));
 		Options.Add(TEXT("卖工艺品"));
 		Options.Add(TEXT("算了"));
 
 		Character->OpenOptionDialog(
 			DisplayName,
-			FString::Printf(TEXT("手上的金重：%.1f g\n黑市价：正规价的 %.0f%%（抛售越多，价越低）\n现金：%d 币"),
-				GI->GoldGrams, EffectiveRate * 100.f, GI->Cash),
+			FString::Printf(
+				TEXT("手上的金重：%.1f g\n他给你的价：%.0f 币/g\n好感度：%d（%s，正规价的 %d%%）\n%s\n现金：%d 币"),
+				GI->GoldGrams, GI->GetFencePricePerGram(), GI->FenceFavor,
+				*GI->GetFavorLabel(), GI->GetFavorPercent(),
+				*GI->GetStrictnessHint(), GI->Cash),
 			Options);
 		return;
 	}
@@ -376,6 +400,47 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	if (CraftFlow != 0)
 	{
 		HandleCraftSellOption(Character, Index);
+		return;
+	}
+
+	// ---- 卖黄金的三级页面 ----
+	if (SellFlow == 1)		// 入口页：老老实实卖 / 掺点黄铜卖 / 上一步
+	{
+		if (Index == 0) { BuildHonestSellPage(Character); return; }
+		if (Index == 1) { BuildAdulteratedSellPage(Character); return; }
+
+		SellFlow = 0;
+		BuildDialog(Character);		// 上一步
+		return;
+	}
+
+	if (SellFlow == 2)		// 老实卖页：卖出全部 / 上一步
+	{
+		if (Index == 0)
+		{
+			SettleGoldSale(Character, GI->GoldGrams, 0.f, Kind == EMerchantKind::LegitBuyer);
+			return;
+		}
+
+		OpenGoldSellPage(Character);
+		return;
+	}
+
+	if (SellFlow == 3)		// 掺着卖页：就这么卖 / 上一步
+	{
+		if (Index == 0)
+		{
+			if (!bSellGramsFilled || !bBrassFilled)
+			{
+				ShowResult(Character, TEXT("两行都要填：先填卖多少克黄金，再填掺多少克黄铜。"));
+				return;
+			}
+
+			SettleGoldSale(Character, PendingSellGrams, PendingBrass, Kind == EMerchantKind::LegitBuyer);
+			return;
+		}
+
+		OpenGoldSellPage(Character);
 		return;
 	}
 
@@ -465,8 +530,7 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		}
 		if (Index == 0)
 		{
-			SellGoldLegit(FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams));
-			BuildDialog(Character);
+			OpenGoldSellPage(Character);
 		}
 		return;
 	}
@@ -537,9 +601,8 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 		}
 		if (Index == 0)
 		{
-			SellGold(GI->GoldGrams);
-			// 卖完重刷对话框，让"手上的金重"立刻反映新数值
-			BuildDialog(Character);
+			// 进「卖黄金」页：先填掺多少黄铜，再确认
+			OpenGoldSellPage(Character);
 		}
 		return;
 	}
@@ -711,8 +774,8 @@ void AMerchant::SellHandicraftToFence(AstudyCharacter* Character, int32 BagIndex
 		Real * 100.f, Reported * 100.f, bCaught ? TEXT("识破") : TEXT("蒙混"), Earned, GI->FenceFavor);
 
 	CraftFlow = 0;
-	Character->SetDialogNumberEnabled(0.f);		// 结算完就别再摆着"报多少 %"那一行了
-	Character->OpenOptionDialog(DisplayName, Verdict, { TEXT("知道了") });
+	Character->SetDialogNumberEnabled(0.f);
+	ShowResult(Character, Verdict);
 }
 
 void AMerchant::SellHandicraftToLegit(AstudyCharacter* Character, int32 BagIndex)
@@ -736,10 +799,36 @@ void AMerchant::SellHandicraftToLegit(AstudyCharacter* Character, int32 BagIndex
 
 	CraftFlow = 0;
 	Character->SetDialogNumberEnabled(0.f);		// 结算完就别再摆着数字输入行了
-	Character->OpenOptionDialog(DisplayName,
+	ShowResult(Character,
 		FString::Printf(TEXT("（他当着你的面过了秤、化了点边角料）\n\n成色 %.0f%%。\n按全价给你 %d 币。"),
-			It.RealPurity * 100.f, Earned),
-		{ TEXT("知道了") });
+			It.RealPurity * 100.f, Earned));
+}
+
+void AMerchant::OnDialogNumber2(AstudyCharacter* Character, float Value)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	// 掺着卖页：第二行 = 掺多少克黄铜（买不起就压到买得起的量并提示）
+	if (SellFlow == 3)
+	{
+		const float MaxBrass = GI->Cash / static_cast<float>(UstudyGameInstance::BrassPricePerGram);
+		float BrassValue = FMath::Max(Value, 0.f);
+
+		if (BrassValue > MaxBrass + 0.01f)
+		{
+			SellWarning = FString::Printf(TEXT("你的钱不够买这么多黄铜（最多 %.1f g）"), MaxBrass);
+			Character->SetDialogNumberPrefill(MaxBrass, true);
+			BrassValue = MaxBrass;
+		}
+
+		PendingBrass = BrassValue;
+		bBrassFilled = true;
+		BuildAdulteratedSellPage(Character);
+	}
 }
 
 void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
@@ -750,12 +839,51 @@ void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
 		return;
 	}
 
+	// 老实卖页：填多少克就卖多少克，不掺
+	if (SellFlow == 2)
+	{
+		if (Value > GI->GoldGrams + 0.01f)
+		{
+			// 填超了：不给卖，提示一句，并把输入框改成最大值
+			SellWarning = FString::Printf(TEXT("你哪有这么多黄金（手上只有 %.1f g）"), GI->GoldGrams);
+			Character->SetDialogNumberPrefill(GI->GoldGrams, false);
+			BuildHonestSellPage(Character);
+			return;
+		}
+
+		SettleGoldSale(Character, FMath::Clamp(Value, 0.f, GI->GoldGrams), 0.f,
+			Kind == EMerchantKind::LegitBuyer);
+		return;
+	}
+
+	// 掺着卖页：第一行 = 卖多少克黄金
+	if (SellFlow == 3)
+	{
+		if (Value > GI->GoldGrams + 0.01f)
+		{
+			SellWarning = FString::Printf(TEXT("你哪有这么多黄金（手上只有 %.1f g）"), GI->GoldGrams);
+			Character->SetDialogNumberPrefill(GI->GoldGrams, false);
+			BuildAdulteratedSellPage(Character);
+			return;
+		}
+
+		PendingSellGrams = FMath::Clamp(Value, 0.f, GI->GoldGrams);
+		bSellGramsFilled = true;
+		BuildAdulteratedSellPage(Character);
+		return;
+	}
+
 	// 工艺品报价（0-100）
 	if (PendingCraftSell >= 0)
 	{
+		if (Value <= 0.f)
+		{
+			return;
+		}
+
 		const int32 BagIndex = PendingCraftSell;
 		PendingCraftSell = -1;
-		SellHandicraftToFence(Character, BagIndex, Value / 100.f);
+		SellHandicraftToFence(Character, BagIndex, FMath::Clamp(Value, 0.f, 100.f) / 100.f);
 		return;
 	}
 
@@ -843,6 +971,345 @@ void AMerchant::SellGoldLegit(float Grams)
 
 	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s 全额收走 %.1f g → +%d 币；配额剩 %.1f g，现金 %d"),
 		*DisplayName, Sold, Earned, GI->BuyerQuotaGrams, GI->Cash);
+}
+
+// ==================== 卖黄金：掺假 ====================
+
+void AMerchant::OpenGoldSellPage(AstudyCharacter* Character)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	// 没金子就悄悄回菜单，不再弹"你身上没金子"那个窗
+	if (GI->GoldGrams <= 0.f)
+	{
+		SellFlow = 0;
+		BuildDialog(Character);
+		return;
+	}
+
+	const bool bToLegit = (Kind == EMerchantKind::LegitBuyer);
+
+	SellFlow = 1;
+	PendingBrass = 0.f;
+	PendingSellGrams = 0.f;
+	bSellGramsFilled = false;
+	bBrassFilled = false;
+	SellWarning.Reset();
+
+	Character->SetDialogNumberEnabled(0.f);
+	Character->SetDialogNumberEnabled2(0.f);
+
+	TArray<FString> Options;
+	Options.Add(TEXT("老老实实卖"));
+	Options.Add(TEXT("掺点黄铜卖"));
+	Options.Add(TEXT("上一步"));
+
+	FString Body = FString::Printf(TEXT("手上的金重：%.1f g\n"), GI->GoldGrams);
+
+	if (bToLegit)
+	{
+		Body += FString::Printf(
+			TEXT("他按正规价 100%% 收，今天还能收 %.1f g。\n"
+				 "他每次都抽检 —— 掺了黄铜被抽到，这一包退回来，今天这个窗口就没了。"),
+			GI->BuyerQuotaGrams);
+	}
+	else
+	{
+		Body += FString::Printf(
+			TEXT("他给你的价：%.0f 币/g\n好感度 %d（%s，正规价的 %d%%）\n%s"),
+			GI->GetFencePricePerGram(), GI->FenceFavor, *GI->GetFavorLabel(),
+			GI->GetFavorPercent(), *GI->GetStrictnessHint());
+	}
+
+	Body += FString::Printf(TEXT("\n\n黄铜 %d 币/g，按掺进去的克数现钱扣。"),
+		UstudyGameInstance::BrassPricePerGram);
+
+	Character->OpenOptionDialog(DisplayName, Body, Options);
+	Character->SetDialogMerchant(this);
+}
+
+void AMerchant::BuildHonestSellPage(AstudyCharacter* Character)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	const bool bToLegit = (Kind == EMerchantKind::LegitBuyer);
+	const float Unit = bToLegit ? static_cast<float>(AstudyGameState::BasePricePerGram)
+								: GI->GetFencePricePerGram();
+
+	SellFlow = 2;
+	PendingBrass = 0.f;
+	bSellGramsFilled = false;
+	bBrassFilled = false;
+
+	Character->SetDialogNumberUnit(TEXT("g"));
+	Character->SetDialogNumberEnabled(GI->GoldGrams);	// 第一行：卖多少 g
+	Character->SetDialogNumberEnabled2(0.f);
+
+	// 默认就填最大值：一次卖光是最常见的操作，玩家按一下确认就行
+	Character->SetDialogNumberPrefill(GI->GoldGrams, false);
+
+	TArray<FString> Options;
+	Options.Add(TEXT("卖出全部"));
+	Options.Add(TEXT("上一步"));
+
+	FString Body;
+	if (!SellWarning.IsEmpty())
+	{
+		Body = FString::Printf(TEXT("⚠ %s\n\n"), *SellWarning);
+		SellWarning.Reset();
+	}
+
+	Body += FString::Printf(
+		TEXT("手上的金重：%.1f g\n单价：%.0f 币/g\n\n"
+			 "上面那行填要卖多少克（已替你填成全部，改小就卖一部分）。\n不掺黄铜，一手交一手验。"),
+		GI->GoldGrams, Unit);
+
+	Character->OpenOptionDialog(DisplayName, Body, Options);
+	Character->SetDialogMerchant(this);
+}
+
+void AMerchant::BuildAdulteratedSellPage(AstudyCharacter* Character)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	const bool bToLegit = (Kind == EMerchantKind::LegitBuyer);
+	const float Unit = bToLegit ? static_cast<float>(AstudyGameState::BasePricePerGram)
+								: GI->GetFencePricePerGram();
+
+	SellFlow = 3;
+
+	// 第一行填"卖多少 g"，第二行填"掺多少 g"
+	Character->SetDialogNumberUnit(TEXT("g"));
+	Character->SetDialogNumberEnabled(GI->GoldGrams);
+	Character->SetDialogNumberEnabled2(FMath::Max(GI->GoldGrams, 1.f));
+
+	// 第一行默认填满（卖光最常见）；填过什么就回显什么
+	Character->SetDialogNumberPrefill(bSellGramsFilled ? PendingSellGrams : GI->GoldGrams, false);
+	if (bBrassFilled)
+	{
+		Character->SetDialogNumberPrefill(PendingBrass, true);
+	}
+
+	TArray<FString> Options;
+	Options.Add(TEXT("就这么卖"));
+	Options.Add(TEXT("上一步"));
+
+	const float SellG = bSellGramsFilled ? PendingSellGrams : 0.f;
+	const float BrassG = bBrassFilled ? PendingBrass : 0.f;
+	const float Declared = SellG + BrassG;
+	const int32 BrassCost = FMath::RoundToInt(BrassG * UstudyGameInstance::BrassPricePerGram);
+	const int32 Gain = FMath::RoundToInt(Declared * Unit) - FMath::RoundToInt(SellG * Unit);
+
+	FString Body;
+	if (!SellWarning.IsEmpty())
+	{
+		Body = FString::Printf(TEXT("⚠ %s\n\n"), *SellWarning);
+		SellWarning.Reset();
+	}
+
+	Body += FString::Printf(
+		TEXT("手上的金重：%.1f g\n单价：%.0f 币/g\n\n"
+			 "① 第一行填要卖多少克：%s\n"
+			 "② 第二行填掺多少克黄铜：%s\n\n"
+			 "黄铜 %d 币/g，按掺入克数现钱扣。"),
+		GI->GoldGrams, Unit,
+		bSellGramsFilled ? *FString::Printf(TEXT("%.1f g"), SellG) : TEXT("还没填"),
+		bBrassFilled ? *FString::Printf(TEXT("%.1f g"), BrassG) : TEXT("还没填"),
+		UstudyGameInstance::BrassPricePerGram);
+
+	if (bSellGramsFilled && bBrassFilled)
+	{
+		Body += FString::Printf(
+			TEXT("\n申报 %.1f g → 约多拿 %d 币（铜费 %d 币）"), Declared, Gain, BrassCost);
+
+		if (BrassG > 0.01f)
+		{
+			Body += FString::Printf(TEXT("\n风险：%s"), *GI->GetAdulterationHintEx(SellG, BrassG));
+		}
+	}
+	else
+	{
+		Body += TEXT("\n两行都填了才能卖。");
+	}
+
+	Character->OpenOptionDialog(DisplayName, Body, Options);
+	Character->SetDialogMerchant(this);
+}
+
+void AMerchant::ShowResult(AstudyCharacter* Character, const FString& Body)
+{
+	if (!Character)
+	{
+		return;
+	}
+
+	Character->SetDialogNumberEnabled(0.f);
+	Character->SetDialogNumberEnabled2(0.f);
+	Character->OpenOptionDialog(DisplayName, Body, { TEXT("知道了") });
+
+	// 关键：结果页不挂商人。否则点「知道了」会被当成又点了菜单第 0 项
+	Character->SetDialogMerchant(nullptr);
+}
+
+void AMerchant::SettleGoldSale(AstudyCharacter* Character, float SellGrams, float BrassGrams, bool bToLegit)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character || GI->GoldGrams <= 0.f)
+	{
+		SellFlow = 0;
+		if (Character)
+		{
+			BuildDialog(Character);
+		}
+		return;
+	}
+
+	SellFlow = 0;
+	SellWarning.Reset();
+
+	const float Total = GI->GoldGrams;
+	const float G = FMath::Clamp(SellGrams, 0.f, Total);		// 这一笔卖掉多少真金
+	const float Brass = FMath::Clamp(BrassGrams, 0.f, Total * 2.f);
+	if (G <= 0.f)
+	{
+		ShowResult(Character, TEXT("克数得填大于 0 的数。"));
+		return;
+	}
+
+	const float R = (G + Brass > 0.f) ? (Brass / (G + Brass)) : 0.f;
+	const int32 BrassCost = FMath::RoundToInt(Brass * UstudyGameInstance::BrassPricePerGram);
+
+	// ⚠ 概率要先算（它读金重），再动库存
+	const float BlackCatch = GI->GetAdulterationCatchChanceEx(G, Brass);
+	const float SpotChance = FMath::Clamp(0.10f + 1.0f * R, 0.f, 0.95f);
+
+	// 只扣掉这一笔；剩下的金子还在手上
+	GI->GoldGrams = FMath::Max(Total - G, 0.f);
+	GI->Cash = FMath::Max(GI->Cash - BrassCost, 0);
+
+	FString Body;
+
+	if (bToLegit)
+	{
+		const bool bSpot = (Brass > 0.01f) && !GI->bBuyerFirstPass && (FMath::FRand() < SpotChance);
+
+		if (bSpot)
+		{
+			// 整包退回：这一笔的金重还回去，黄铜钱白花，今天这个窗口不再收
+			GI->GoldGrams = FMath::Min(Total, GI->GoldGrams + G);
+			GI->bBuyerRejectedToday = true;
+
+			Body = FString::Printf(
+				TEXT("（他剪了一小块丢进坩埚，看了一会儿，没说话）\n\n"
+					 "「这一包我不收。」他把袋子推回来。\n\n"
+					 "金重退回 %.1f g，黄铜那 %d 币白花了。今天这个窗口对你不开了。"),
+				G, BrassCost);
+
+			GI->PushFeed(TEXT("你在正规买家那儿被抽检出来，整包退回"));
+			UE_LOG(LogTemp, Log, TEXT("[Gold] 正规买家抽检命中（掺 %.0f%%，概率 %.0f%%）→ 退回"),
+				R * 100.f, SpotChance * 100.f);
+		}
+		else
+		{
+			const float Declared = G + Brass;
+			const float Accepted = FMath::Min(Declared, GI->BuyerQuotaGrams);
+			const float Ratio = (Declared > 0.f) ? (Accepted / Declared) : 1.f;
+
+			GI->Cash += FMath::RoundToInt(Accepted * static_cast<float>(AstudyGameState::BasePricePerGram));
+			GI->BuyerQuotaGrams = FMath::Max(GI->BuyerQuotaGrams - Accepted, 0.f);
+
+			// 配额不够时，剩下的真金还给你（按比例，简化）
+			if (Accepted < Declared - 0.01f)
+			{
+				GI->GoldGrams += G * (1.f - Ratio);
+			}
+
+			GI->bBuyerFirstPass = false;
+
+			Body = FString::Printf(
+				TEXT("（他过了秤，按你申报的 %.1f g 记账）\n\n收了 %.1f g，给你 %d 币。"),
+				Declared, Accepted,
+				FMath::RoundToInt(Accepted * static_cast<float>(AstudyGameState::BasePricePerGram)));
+
+			GI->PushFeed(FString::Printf(TEXT("你把 %.1f g 卖给正规买家，+%d 币"), Accepted,
+				FMath::RoundToInt(Accepted * static_cast<float>(AstudyGameState::BasePricePerGram))));
+			UE_LOG(LogTemp, Log, TEXT("[Gold] 卖正规 申报 %.1f g（真实 %.1f）→ %d 币"),
+				Declared, G, FMath::RoundToInt(Accepted * static_cast<float>(AstudyGameState::BasePricePerGram)));
+		}
+	}
+	else
+	{
+		const bool bCaught = (Brass > 0.01f) && (FMath::FRand() < BlackCatch);
+		const float Unit = GI->GetFencePricePerGram();
+
+		if (bCaught)
+		{
+			const int32 Gross = FMath::RoundToInt(G * Unit);
+			const int32 Fine = FMath::RoundToInt(Gross * 0.15f);
+			const int32 Earned = FMath::Max(Gross - Fine, 0);
+			GI->Cash += Earned;
+
+			// 好感降幅按掺的比例走（PRD：一成 −6 / 二成半 −14 / 四成 −25）
+			int32 FavorDrop = 6;
+			if (R > 0.30f) { FavorDrop = 25; }
+			else if (R > 0.15f) { FavorDrop = 14; }
+			GI->FenceFavor = FMath::Clamp(GI->FenceFavor - FavorDrop, 0, 100);
+
+			Body = FString::Printf(
+				TEXT("他把袋子往秤上一扔，手一掂就放下了。\n\n"
+					 "「你这手感不对。」\n\n"
+					 "他倒出来过了秤，只算 %.1f g 真金，还扣了 15%% 的罚款。\n"
+					 "到手 %d 币（黄铜那 %d 币也白花了）。\n好感 −%d，现在他是%s。"),
+				G, Earned, BrassCost, FavorDrop, *GI->GetFavorLabel());
+
+			GI->PushFeed(FString::Printf(TEXT("你在黑市掺了黄铜被当场识破（好感 −%d）"), FavorDrop));
+			UE_LOG(LogTemp, Log, TEXT("[Gold] 黑市识破（掺 %.0f%%，概率 %.0f%%）→ 真金 %.1f g，%d 币，好感 %d"),
+				R * 100.f, BlackCatch * 100.f, G, Earned, GI->FenceFavor);
+		}
+		else
+		{
+			const float Declared = G + Brass;
+			const int32 Earned = FMath::RoundToInt(Declared * Unit);
+			GI->Cash += Earned;
+
+			if (Brass <= 0.01f)
+			{
+				// 老实卖：好感慢慢涨回来
+				GI->FenceFavor = FMath::Clamp(GI->FenceFavor + FMath::FloorToInt(G / 5.f), 0, 100);
+			}
+
+			// 抛出去的量大，价就掉
+			GI->ApplyBlackMarketDump(Declared);
+
+			Body = FString::Printf(
+				TEXT("他没多问，过了秤就付钱。\n\n申报 %.1f g，按 %.0f 币/g 给你 %d 币。"),
+				Declared, Unit, Earned);
+
+			GI->PushFeed(FString::Printf(TEXT("你把 %.1f g 卖给黑市，+%d 币"), Declared, Earned));
+			UE_LOG(LogTemp, Log, TEXT("[Gold] 卖黑市 申报 %.1f g（真实 %.1f）→ %d 币，好感 %d"),
+				Declared, G, Earned, GI->FenceFavor);
+		}
+	}
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
+	PendingBrass = 0.f;
+	PendingSellGrams = 0.f;
+	bSellGramsFilled = false;
+	bBrassFilled = false;
+	ShowResult(Character, Body);
 }
 
 bool AMerchant::BuyMineRight()

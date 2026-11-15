@@ -229,7 +229,86 @@ public:
 
 	/** 黑商好感度 0~100：每卖给他 5 g 黄金 +1，被识破 -15 */
 	UPROPERTY(BlueprintReadOnly, Category = "Handicraft")
-	int32 FenceFavor = 50;
+	int32 FenceFavor = 60;
+
+	// ---------------- 掺假（PRD §2.9 / D22） ----------------
+
+	/**
+	 * 黑商今天的严格度 0~1。每天重掷，第 1 天恒为 0（新手保护）。
+	 * 只用来算抽查概率，**永远不给玩家看数字**，只给一句口语提示（见 GetStrictnessHint）。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Market")
+	float FenceStrictness = 0.f;
+
+	/** 黄铜单价（币/g）：黑商从柜台底下摸出来卖给你的 */
+	static constexpr int32 BrassPricePerGram = 40;
+
+	/** 掺 BrassGrams 克黄铜的"被抓概率"（掂量 + 抽查合一，0~1） */
+	float GetAdulterationCatchChance(float BrassGrams) const;
+
+	/** 同上，但按"这一笔要卖多少克"算 —— 卖一部分时概率按这一包算，不是按全部库存 */
+	float GetAdulterationCatchChanceEx(float SellGrams, float BrassGrams) const;
+
+	/** 风险口语提示：很可能发现不了 / 可能被抓 / 这很容易被抓 / 这一掂量就能分出来 */
+	FString GetAdulterationHint(float BrassGrams) const;
+
+	/** 同上，按这一笔算 */
+	FString GetAdulterationHintEx(float SellGrams, float BrassGrams) const;
+
+	/** 严格度的口语提示（他今天称得松 / 就那样 / 手挺勤 / 盯着你看） */
+	FString GetStrictnessHint() const;
+
+	/** 好感度 → 收购价系数（PRD 四档 68/65/58/50 除以 65） */
+	float GetFavorFactor() const;
+
+	/** 好感度档位名（老主顾 / 熟人 / 生面孔 / 麻烦精） */
+	FString GetFavorLabel() const;
+
+	/** 该档位对应的收购价（68 / 65 / 58 / 50，正规价的百分比） */
+	int32 GetFavorPercent() const;
+
+	/** 今天黑市真正到手的单价 = 1000 × 当天基础价 × 砸价 × 好感 */
+	float GetFencePricePerGram() const;
+
+	/** 换天时重掷严格度（第 1 天恒 0） */
+	void RollDailyStrictness();
+
+	// ---------------- 每日播报 ----------------
+
+	/** 今天发生过的事（一条一行，换天时清空） */
+	UPROPERTY(BlueprintReadOnly, Category = "Report")
+	TArray<FString> TodayFeed;
+
+	/** 睡醒后要弹的播报；GameMode 读完就清空 */
+	UPROPERTY(BlueprintReadOnly, Category = "Report")
+	FString PendingReport;
+
+	/** 往当天事件流里塞一行 */
+	void PushFeed(const FString& Line);
+
+	/** 换天时调：把今天的事 + 名次变化拼成播报，清空事件流。必须在 DayIndex++ 之前调 */
+	void ComposeMorningReport();
+
+	/** 我的总资产：现金 + （口袋/仓库/暂存）金重 × 正规价 + 工艺品真实价值 */
+	int32 GetMyAssetTotal() const;
+
+	/** 第 Index 个对手的总资产（现金 + 囤金 + 手上工艺品） */
+	int32 GetRivalAssetTotal(int32 Index) const;
+
+	/** 我现在第几名（1 起） */
+	int32 GetMyRank() const;
+
+	/** 上一次收工时我第几名（0 = 还没播过） */
+	UPROPERTY(BlueprintReadOnly, Category = "Report")
+	int32 RankYesterday = 0;
+
+	/** 正规买家第一次交货不抽检（PRD 新手保护） */
+	UPROPERTY(BlueprintReadOnly, Category = "Market")
+	bool bBuyerFirstPass = true;
+
+	/** 今天被正规买家抽到过：本次窗口不再收你的货 */
+	UPROPERTY(BlueprintReadOnly, Category = "Market")
+	bool bBuyerRejectedToday = false;
 
 	/** 换天/首次进入时刷货架（ShelfDay == DayIndex 时直接返回） */
 	void RefillShelfIfNeeded();
@@ -293,8 +372,8 @@ public:
 	/** 1 游戏小时 = 多少真实秒（60 → 1 真实秒 = 1 游戏分钟） */
 	static constexpr float RealSecondsPerGameHour = 60.f;
 
-	/** 一局总共几天（现在是两天） */
-	static constexpr int32 TotalDays = 2;
+	/** 一局总共几天（PRD §2.3：一季 12 个游戏日） */
+	static constexpr int32 TotalDays = 12;
 
 	/** 一次开采能挖多久（真实秒） */
 	static constexpr float MineDurationSeconds = 180.f;

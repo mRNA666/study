@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "DropItem.h"
@@ -114,7 +114,7 @@ FString ADropItem::GoldGradeWord(float InGoldContent)
 {
 	if (InGoldContent < 0.001f)
 	{
-		return TEXT("石渣");
+		return TEXT("矿渣");
 	}
 	if (InGoldContent < 0.03f)
 	{
