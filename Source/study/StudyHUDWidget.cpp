@@ -548,10 +548,14 @@ void UStudyHUDWidget::Refresh()
 		}
 		if (AMerchant* M = Character->GetNearbyMerchant())
 		{
-			// 床用专门的提示语
+			// 床 / 轮盘用专门的提示语
 			if (M->Kind == EMerchantKind::Bed)
 			{
 				Hint = TEXT("按  E  睡觉");
+			}
+			else if (M->Kind == EMerchantKind::Roulette)
+			{
+				Hint = TEXT("按  E  玩一把轮盘");
 			}
 			else
 			{

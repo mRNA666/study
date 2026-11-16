@@ -29,7 +29,10 @@ enum class EMerchantKind : uint8
 	LegitBuyer UMETA(DisplayName = "正规买家"),
 
 	/** 听泉鉴宝：花 500 鉴定一件工艺品的真实含金量 */
-	Appraiser UMETA(DisplayName = "听泉鉴宝")
+	Appraiser UMETA(DisplayName = "听泉鉴宝"),
+
+	/** 轮盘赌台：押红/黑/绿，转盘停在哪格开奖（ARouletteTable 用它） */
+	Roulette UMETA(DisplayName = "轮盘赌台")
 };
 
 /**
