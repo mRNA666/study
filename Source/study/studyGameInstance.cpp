@@ -79,7 +79,13 @@ void UstudyGameInstance::SleepToNextDay()
 	bBuyerRejectedToday = false;
 	RollDailyStrictness();
 
-	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00（黑商严格度 %.2f，补跑 %.0f 游戏分钟）"),
+	// 昨天的抛售后遗症不带过夜：新的一天，黑市从满价重新开始。
+	// 为什么必须这么做：四个人一季往市场里倒两千多克，按 0.004/g 的砸价、
+	// 0.0012/秒 的回血算，抛售永远比回血快一点，黑市价会常年钉在 0.60 的地板上 ——
+	// 那玩家看到的就永远是一个常数，"卖多了会掉价"这件事根本体现不出来。
+	BlackMarketMultiplier = 1.f;
+
+	UE_LOG(LogTemp, Log, TEXT("[Run] 睡到第 %d 天 08:00（黑商严格度 %.2f，补跑 %.0f 游戏分钟，黑市价归满）"),
 		DayIndex, FenceStrictness, SkippedDayMinutes);
 }
 
@@ -159,8 +165,10 @@ void UstudyGameInstance::ApplyBlackMarketDump(float Grams)
 		return;
 	}
 
-	// 卖 15g → 价格 -6%；地板 60%，防止几个人一起砸到底
-	BlackMarketMultiplier = FMath::Clamp(BlackMarketMultiplier - Grams * 0.004f, 0.60f, 1.f);
+	// 卖 15 g → 价格 -3%；地板 60%，防止几个人一起砸到底
+	// （v3.24 从 0.004 降到 0.002：四个人一季往市场里倒两千多克，
+	//   原来那个速率让抛售永远快过回血，价格常年钉在地板上。）
+	BlackMarketMultiplier = FMath::Clamp(BlackMarketMultiplier - Grams * 0.002f, 0.60f, 1.f);
 }
 
 void UstudyGameInstance::TickRivals(float DeltaSeconds)
@@ -478,7 +486,7 @@ void UstudyGameInstance::SellRivalStash(FRivalState& R)
 
 		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 抢在窗口交了 %.1f g（全额）→ 现金 %d，池子剩 %.1f g"),
 			*R.Name, Sold, R.Cash, BuyerQuotaGrams);
-		PushFeed(FString::Printf(TEXT("%s 抢先交给正规买家 %.0f g（窗口还剩 %.0f g）"),
+		PushFeed(FString::Printf(TEXT("%s 抢先交给正规商人 %.0f g（正规商人的收购额还剩 %.0f g）"),
 			*R.Name, Sold, BuyerQuotaGrams));
 		return;
 	}
@@ -1161,8 +1169,9 @@ void UstudyGameInstance::ComposeMorningReport()
 	{
 		Body += FString::Printf(TEXT("\n今天（第 %d 天）："), Today);
 		Body += (Today % 2 == 0)
-			? TEXT("正规买家开窗口，全场 3000 g 配额；黑市换新货")
-			: TEXT("黑市换新货；正规买家明天才来");
+			? FString::Printf(TEXT("正规商人开窗口，收购额还剩 %d g；黑市换新货"),
+				FMath::RoundToInt(FMath::Max(BuyerQuotaGrams, BuyerQuotaMinPerWindow)))
+			: FString(TEXT("黑市换新货；正规商人明天才来"));
 	}
 	else
 	{
