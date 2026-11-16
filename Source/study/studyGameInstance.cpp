@@ -34,6 +34,9 @@ void UstudyGameInstance::ResetRun()
 	bBuyerFirstPass = true;
 	bBuyerRejectedToday = false;
 
+	// 贷款的欠款也要清零（不然重开一局还背着上一局的债）
+	LoanBalance = 0.f;
+
 	// 对手也要重新开局
 	InitRivals();
 
@@ -50,6 +53,10 @@ void UstudyGameInstance::SleepToNextDay()
 	// （放在播报之前，这样补出来的事件会出现在今天的简报里）
 	const float SkippedDayMinutes = FMath::Max(DayEndMinutes - ClockMinutes, 0.f);
 	CatchUpRivals(SkippedDayMinutes);
+
+	// 黑社会的利息也在播报之前结算：这样早上那份简报里的"资产"已经扣掉新利息，
+	// 简报的事件列表里也会有"利息 +X"这一条
+	ApplyDailyInterest();
 
 	// 先播报：这时候 DayIndex 还是"刚结束的那天"
 	ComposeMorningReport();
@@ -710,7 +717,6 @@ int32 UstudyGameInstance::GetMyAssetTotal() const
 {
 	int32 Total = Cash + FMath::RoundToInt(
 		(GoldGrams + StashedGoldGrams) * static_cast<float>(AstudyGameState::BasePricePerGram));
-
 	// 身上背着的金（挖出来还没交回营地）也算资产 ——
 	// 不算的话 Tab 和每日播报会差一截，人在矿洞里的时候尤其明显
 	if (const UWorld* W = GetWorld())
@@ -727,7 +733,87 @@ int32 UstudyGameInstance::GetMyAssetTotal() const
 
 	// 工艺品按账面价（没鉴定过 = 黑商报的含金量）
 	Total += SumCraftValue(HandicraftBag);
+
+	// 欠黑社会的钱是**负债**，必须从资产里扣掉。
+	// 不扣的话"借钱"就等于凭空变资产，Tab 排名和赛季结算都会被刷。
+	Total -= GetLoanOwed();
+
 	return Total;
+}
+
+// ==================== 黑社会的放数 ====================
+
+bool UstudyGameInstance::TakeLoan(int32 Amount)
+{
+	if (Amount <= 0)
+	{
+		return false;
+	}
+
+	// 额度按"欠款总额"算（含已经滚出来的利息）
+	if (Amount > GetLoanRoom())
+	{
+		return false;
+	}
+
+	Cash += Amount;
+	LoanBalance += static_cast<float>(Amount);
+
+	UE_LOG(LogTemp, Log, TEXT("[Loan] 借了 %d 币 → 欠款 %d（现金 %d）"),
+		Amount, GetLoanOwed(), Cash);
+
+	PushFeed(FString::Printf(TEXT("你向黑社会借了 %d 币"), Amount));
+	return true;
+}
+
+bool UstudyGameInstance::RepayLoan(int32 Amount)
+{
+	if (Amount <= 0 || !HasLoan())
+	{
+		return false;
+	}
+
+	// 三个上限取最小：想还的 / 手上的现金 / 实际欠款
+	const int32 Pay = FMath::Min3(Amount, Cash, FMath::CeilToInt(LoanBalance));
+	if (Pay <= 0)
+	{
+		return false;
+	}
+
+	Cash -= Pay;
+	LoanBalance = FMath::Max(0.f, LoanBalance - static_cast<float>(Pay));
+
+	// 尾差（0.4 币这种）直接抹掉，免得永远差一点点还清
+	if (LoanBalance < 1.f)
+	{
+		LoanBalance = 0.f;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[Loan] 还了 %d 币 → 欠款 %d（现金 %d）"),
+		Pay, GetLoanOwed(), Cash);
+
+	PushFeed(FString::Printf(TEXT("你还了黑社会 %d 币"), Pay));
+	return true;
+}
+
+void UstudyGameInstance::ApplyDailyInterest()
+{
+	if (!HasLoan())
+	{
+		return;
+	}
+
+	const float Before = LoanBalance;
+
+	// 利滚利：欠款 ×= 1.03
+	LoanBalance *= (1.f + LoanDailyRate);
+
+	const int32 Interest = FMath::RoundToInt(LoanBalance - Before);
+
+	UE_LOG(LogTemp, Log, TEXT("[Loan] 第 %d 天利息 +%d → 欠款 %d"),
+		DayIndex, Interest, GetLoanOwed());
+
+	PushFeed(FString::Printf(TEXT("利滚利 +%d 币，现在欠 %d 币"), Interest, GetLoanOwed()));
 }
 
 int32 UstudyGameInstance::GetRivalAssetTotal(int32 Index) const
@@ -799,6 +885,13 @@ void UstudyGameInstance::ComposeMorningReport()
 		{
 			Body += TEXT("（没变）");
 		}
+	}
+
+	// 欠黑社会的钱单独提一句：早上看一眼就知道今天有多少压力
+	if (HasLoan())
+	{
+		Body += FString::Printf(TEXT("\n欠黑社会 %d 币（日息 %d%%，明天还会 +%d）"),
+			GetLoanOwed(), FMath::RoundToInt(LoanDailyRate * 100.f), GetLoanDailyInterest());
 	}
 
 	// 播报是"睡醒之后"看的，所以这里说的是【今天】会发生什么

@@ -67,6 +67,15 @@ void AMerchant::OnConstruction(const FTransform& Transform)
 	{
 		BodyMesh->SetVisibility(!bHideBody);
 	}
+
+	// 黑社会：旧名字（商人 / 银行行长）自动换成新称呼；你自己起的名不会被覆盖
+	if (Kind == EMerchantKind::Banker
+		&& (DisplayName.Equals(TEXT("商人"))
+			|| DisplayName.Equals(TEXT("银行行长"))
+			|| DisplayName.IsEmpty()))
+	{
+		DisplayName = TEXT("黑社会");
+	}
 }
 
 void AMerchant::BeginPlay()
@@ -143,6 +152,10 @@ bool AMerchant::Interact(AstudyCharacter* Character)
 	ListScroll = 0;
 	CraftFlow = 0;
 	AppraiseCandidates.Reset();
+
+	// 黑社会页面的进度也归零
+	BankFlow = 0;
+	BankWarning.Reset();
 
 	BuildDialog(Character);
 	return true;
@@ -312,6 +325,14 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		return;
 	}
 
+	// ---- 黑社会：借钱 / 还钱 ----
+	// （和别的 NPC 一样，就是 AMerchant + Kind，不用单独写类；在关卡里复制一个圆柱改 Kind 即可）
+	if (Kind == EMerchantKind::Banker)
+	{
+		BuildBankDialog(Character);
+		return;
+	}
+
 	// ---- 正规买家：全额收，每两天开一次窗口 ----
 	if (Kind == EMerchantKind::LegitBuyer)
 	{
@@ -429,6 +450,13 @@ void AMerchant::OnDialogOption(AstudyCharacter* Character, int32 Index)
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI || !Character)
 	{
+		return;
+	}
+
+	// 黑社会：自己一套页面（贷款 / 还款）
+	if (Kind == EMerchantKind::Banker)
+	{
+		HandleBankOption(Character, Index);
 		return;
 	}
 
@@ -954,6 +982,13 @@ void AMerchant::OnDialogNumber(AstudyCharacter* Character, float Value)
 		return;
 	}
 
+	// 黑社会：这个数字是"借多少 / 还多少"
+	if (Kind == EMerchantKind::Banker)
+	{
+		HandleBankNumber(Character, Value);
+		return;
+	}
+
 	// 老实卖页：填多少克就卖多少克，不掺
 	if (SellFlow == 2)
 	{
@@ -1469,4 +1504,257 @@ bool AMerchant::BuyMineRight()
 
 	UGameplayStatics::OpenLevel(this, FName(TEXT("Mine1")));
 	return true;
+}
+
+// ==================== 黑社会（放数） ====================
+//
+// 和别的 NPC 一样：AMerchant + Kind == Banker，在关卡里复制一个圆柱改 Kind 即可。
+// 页面结构复用"卖黄金"那套两级页：一个选项页 + 一个行内数字输入行。
+//   0 主菜单：没欠款 [贷款][离开]；有欠款 [贷款][还款][离开]
+//   1 贷款页：数字行「借 ___ 币」+ [上一步]（填好点数字行上的「确认」）
+//   2 还款页：显示未还金额，数字行「还 ___ 币」+ [全部还清][上一步]
+// 数值（日息 / 额度上限 / 结算扣款）都在 UstudyGameInstance 里。
+
+void AMerchant::BuildBankDialog(AstudyCharacter* Character)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	// DialogChoose 会先关对话（清掉 DialogMerchant）再回调，所以这里必须重新认领
+	Character->SetDialogMerchant(this);
+	Character->SetDialogNumberEnabled2(0.f);
+
+	const int32 Rate = FMath::RoundToInt(UstudyGameInstance::LoanDailyRate * 100.f);
+	const FString Mult = FString::Printf(TEXT("%.2f"), 1.f + UstudyGameInstance::LoanDailyRate);
+
+	// ---------- 主菜单 ----------
+	if (BankFlow == 0)
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		FString Body;
+		if (!BankWarning.IsEmpty())
+		{
+			Body += FString::Printf(TEXT("⚠ %s\n\n"), *BankWarning);
+			BankWarning.Reset();
+		}
+
+		Body += FString::Printf(TEXT("「手头紧？我这儿放数。日息 %d%%，利滚利。」\n\n"), Rate);
+		Body += FString::Printf(TEXT("现金：%d 币\n欠款：%d 币"), GI->Cash, GI->GetLoanOwed());
+
+		if (GI->HasLoan())
+		{
+			Body += FString::Printf(TEXT("（每天 ×%s，明天会 +%d）"), *Mult, GI->GetLoanDailyInterest());
+		}
+
+		Body += FString::Printf(
+			TEXT("\n\n额度 %d 币，还能借 %d 币。\n"
+				 "十二天到期还不清，结算的时候我直接从你的钱里扣。"),
+			UstudyGameInstance::LoanLimit, GI->GetLoanRoom());
+
+		TArray<FString> Options;
+		Options.Add(TEXT("贷款"));
+		if (GI->HasLoan())
+		{
+			Options.Add(TEXT("还款"));
+		}
+		Options.Add(TEXT("离开"));
+
+		Character->OpenOptionDialog(DisplayName, Body, Options);
+		return;
+	}
+
+	// ---------- 贷款页 ----------
+	if (BankFlow == 1)
+	{
+		const int32 Room = GI->GetLoanRoom();
+
+		// 已经顶到额度了：别让玩家填一个注定失败的数，直接说清楚
+		if (Room <= 0)
+		{
+			BankWarning = FString::Printf(TEXT("你已经欠了 %d 币，到额度上限了，先还上再说。"), GI->GetLoanOwed());
+			BankFlow = 0;
+			BuildBankDialog(Character);
+			return;
+		}
+
+		Character->SetDialogNumberStyle(TEXT("借"), TEXT("金额"), TEXT("币"));
+		Character->SetDialogNumberEnabled(static_cast<float>(Room));
+
+		FString Body;
+		if (!BankWarning.IsEmpty())
+		{
+			Body += FString::Printf(TEXT("⚠ %s\n\n"), *BankWarning);
+			BankWarning.Reset();
+		}
+
+		Body += FString::Printf(
+			TEXT("「借多少？」\n\n"
+				 "现金：%d 币\n"
+				 "已欠：%d 币\n"
+				 "日息 %d%% —— 每天醒来欠款 ×%s\n"
+				 "还能借：%d 币\n\n"
+				 "填好金额后，点下面那行的「确认」。"),
+			GI->Cash, GI->GetLoanOwed(), Rate, *Mult, Room);
+
+		Character->OpenOptionDialog(DisplayName, Body, { TEXT("上一步") });
+		Character->SetDialogNumberPrefill(static_cast<float>(FMath::Min(1000, FMath::Max(Room, 1))));
+		Character->SetDialogMerchant(this);
+		return;
+	}
+
+	// ---------- 还款页 ----------
+	Character->SetDialogNumberStyle(TEXT("还"), TEXT("金额"), TEXT("币"));
+
+	const int32 Owed = GI->GetLoanOwed();
+	const int32 Payable = FMath::Min(GI->Cash, Owed);
+	Character->SetDialogNumberEnabled(static_cast<float>(FMath::Max(Payable, 0)));
+
+	FString Body;
+	if (!BankWarning.IsEmpty())
+	{
+		Body += FString::Printf(TEXT("⚠ %s\n\n"), *BankWarning);
+		BankWarning.Reset();
+	}
+
+	Body += FString::Printf(
+		TEXT("「还多少？」\n\n"
+			 "现金：%d 币\n"
+			 "未还：%d 币\n"
+			 "日息 %d%%（明天会 +%d）\n\n"
+			 "填好金额点「确认」；也可以点「全部还清」一次结清。"),
+		GI->Cash, Owed, Rate, GI->GetLoanDailyInterest());
+
+	if (GI->Cash <= 0)
+	{
+		Body += TEXT("\n\n（你一分钱都没有，我可不做慈善。）");
+	}
+
+	TArray<FString> Options;
+	Options.Add(TEXT("全部还清"));
+	Options.Add(TEXT("上一步"));
+
+	Character->OpenOptionDialog(DisplayName, Body, Options);
+	Character->SetDialogNumberPrefill(static_cast<float>(FMath::Max(Payable, 0)));
+	Character->SetDialogMerchant(this);
+}
+
+void AMerchant::HandleBankOption(AstudyCharacter* Character, int32 Index)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	// 贷款页：只有「上一步」
+	if (BankFlow == 1)
+	{
+		BankFlow = 0;
+		BuildBankDialog(Character);
+		return;
+	}
+
+	// 还款页：[全部还清] [上一步]
+	if (BankFlow == 2)
+	{
+		if (Index == 0)
+		{
+			const int32 Pay = FMath::Min(GI->Cash, GI->GetLoanOwed());
+			if (Pay > 0)
+			{
+				GI->RepayLoan(Pay);
+				UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.8f);
+			}
+			else
+			{
+				BankWarning = TEXT("你手上的现金不够还。");
+			}
+		}
+
+		BankFlow = 0;
+		BuildBankDialog(Character);
+		return;
+	}
+
+	// 主菜单：[贷款] [还款] [离开]
+	if (Index == 0)
+	{
+		BankFlow = 1;
+		BuildBankDialog(Character);
+		return;
+	}
+
+	if (GI->HasLoan() && Index == 1)
+	{
+		BankFlow = 2;
+		BuildBankDialog(Character);
+		return;
+	}
+
+	// 「离开」：DialogChoose 已经把对话关掉了
+	BankFlow = 0;
+}
+
+void AMerchant::HandleBankNumber(AstudyCharacter* Character, float Value)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI || !Character)
+	{
+		return;
+	}
+
+	const int32 Amount = FMath::RoundToInt(Value);
+
+	// 贷款页：额度上限 = 欠款总额不许超过 LoanLimit
+	if (BankFlow == 1)
+	{
+		if (Amount <= 0)
+		{
+			BankWarning = TEXT("借款金额得大于 0。");
+		}
+		else if (Amount > GI->GetLoanRoom())
+		{
+			BankWarning = FString::Printf(TEXT("最多还能借 %d 币。"), GI->GetLoanRoom());
+		}
+		else
+		{
+			GI->TakeLoan(Amount);
+			UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.8f);
+			BankFlow = 0;
+		}
+
+		BuildBankDialog(Character);
+		return;
+	}
+
+	// 还款页：自动夹在"手上的现金"和"实际欠款"之间（填超了不报错，直接还满）
+	if (BankFlow == 2)
+	{
+		const int32 Payable = FMath::Min(GI->Cash, GI->GetLoanOwed());
+
+		if (Amount <= 0)
+		{
+			BankWarning = TEXT("还款金额得大于 0。");
+		}
+		else if (Payable <= 0)
+		{
+			BankWarning = TEXT("你手上的现金不够还。");
+		}
+		else
+		{
+			GI->RepayLoan(FMath::Min(Amount, Payable));
+			UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.8f);
+			BankFlow = 0;
+		}
+
+		BuildBankDialog(Character);
+		return;
+	}
+
+	// 主菜单不该走到这里
+	BuildBankDialog(Character);
 }

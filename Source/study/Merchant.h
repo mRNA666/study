@@ -32,7 +32,10 @@ enum class EMerchantKind : uint8
 	Appraiser UMETA(DisplayName = "听泉鉴宝"),
 
 	/** 轮盘赌台：押红/黑/绿，转盘停在哪格开奖（ARouletteTable 用它） */
-	Roulette UMETA(DisplayName = "轮盘赌台")
+	Roulette UMETA(DisplayName = "轮盘赌台"),
+
+	/** 黑社会：借钱 / 还钱，日息 10% 利滚利（ABankerMerchant 用它） */
+	Banker UMETA(DisplayName = "黑社会")
 };
 
 /**
@@ -177,6 +180,19 @@ protected:
 
 	/** 填超了的时候要显示在页面顶部的一句警告（显示一次就清空） */
 	FString SellWarning;
+
+	// ---------------- 黑社会（Kind == Banker） ----------------
+
+	/** 0 = 主菜单，1 = 贷款页，2 = 还款页 */
+	int32 BankFlow = 0;
+
+	/** 黑社会页面顶部的警告（显示一次就清空） */
+	FString BankWarning;
+
+	/** 黑社会：按 BankFlow 弹对应页面 */
+	void BuildBankDialog(AstudyCharacter* Character);
+	void HandleBankOption(AstudyCharacter* Character, int32 Index);
+	void HandleBankNumber(AstudyCharacter* Character, float Value);
 
 	/** 打开「卖黄金」入口页（三个选项） */
 	void OpenGoldSellPage(AstudyCharacter* Character);

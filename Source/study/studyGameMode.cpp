@@ -482,14 +482,23 @@ void AstudyGameMode::EndMatch()
 	GI->GoldGrams = 0.f;
 	GI->bRunFinished = true;
 
+	// 黑社会的放数：还没还的部分，直接从最终金额里扣掉
+	const int32 LoanDebt = GI->GetLoanOwed();
+	if (LoanDebt > 0)
+	{
+		GI->Cash -= LoanDebt;
+		GI->LoanBalance = 0.f;		// 结清，免得结算面板之外的地方再扣一次
+	}
+
 	GS->SetFinalUnsoldCash(UnsoldCash);
+	GS->SetFinalLoanDebt(LoanDebt);
 	GS->SetFinalCash(GI->Cash);
 	GS->SetPhase(EGamePhase::Finished);
 
 	UGameplayStatics::PlaySound2D(this, StudySounds::GameOver(), 0.9f);
 
-	UE_LOG(LogTemp, Log, TEXT("[Match] 结算：未卖 %.1f g 折算 +%d 币，最终现金 %d 币"),
-		UnsoldGrams, UnsoldCash, GI->Cash);
+	UE_LOG(LogTemp, Log, TEXT("[Match] 结算：未卖 %.1f g 折算 +%d 币，欠款扣 %d，最终现金 %d 币"),
+		UnsoldGrams, UnsoldCash, LoanDebt, GI->Cash);
 
 	// 冻结移动和转视角（不禁用输入组件，按 R 重开还要用）
 	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))

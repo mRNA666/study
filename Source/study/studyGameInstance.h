@@ -180,6 +180,42 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	float BuyerQuotaGrams = 3000.f;
 
+	// ---------------- 黑社会的放数（黑社会） ----------------
+
+	/**
+	 * 当前欠款 = 本金 + 累计利息 − 已还。
+	 * 每天醒来滚一次：LoanBalance ×= (1 + LoanDailyRate)
+	 * —— 也就是"利滚利"，不还就是每天多 3%。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Loan")
+	float LoanBalance = 0.f;
+
+	/** 日息 10%（利滚利，借一天不还就多一成） */
+	static constexpr float LoanDailyRate = 0.10f;
+
+	/** 欠款上限（含已经滚出来的利息）。没有上限的话借钱=白送钱，经济会被刷爆 */
+	static constexpr int32 LoanLimit = 20000;
+
+	bool HasLoan() const { return LoanBalance >= 1.f; }
+
+	/** 四舍五入后的欠款（界面显示 / 还款判定用） */
+	int32 GetLoanOwed() const { return FMath::RoundToInt(LoanBalance); }
+
+	/** 今天不还，明天会多欠这么多（界面上给玩家看） */
+	int32 GetLoanDailyInterest() const { return FMath::RoundToInt(LoanBalance * LoanDailyRate); }
+
+	/** 还能再借多少 */
+	int32 GetLoanRoom() const { return FMath::Max(0, LoanLimit - FMath::RoundToInt(LoanBalance)); }
+
+	/** 借钱（进现金）。返回 false = 金额不合法或超过额度 */
+	bool TakeLoan(int32 Amount);
+
+	/** 还钱（自动夹到"现金"和"欠款"之间）。返回 false = 一分钱都没还成 */
+	bool RepayLoan(int32 Amount);
+
+	/** 换天时滚利息（SleepToNextDay 里调一次） */
+	void ApplyDailyInterest();
+
 	/** 回到营地时要在屏幕上弹的一句话（空 = 不弹） */
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	FString CampNoticeText;

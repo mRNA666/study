@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -59,6 +59,13 @@ public:
 
 	int32 GetFinalUnsoldCash() const { return FinalUnsoldCash; }
 	void SetFinalUnsoldCash(int32 InCash) { FinalUnsoldCash = InCash; }
+
+	/** 结算时被扣掉的黑社会的放数（没还的部分直接进这里，显示用） */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
+	int32 FinalLoanDebt = 0;
+
+	int32 GetFinalLoanDebt() const { return FinalLoanDebt; }
+	void SetFinalLoanDebt(int32 InDebt) { FinalLoanDebt = InDebt; }
 
 	/** 本次开采按游戏时钟几点收工（0 = 不在矿里，HUD 不显示） */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")

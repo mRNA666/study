@@ -602,11 +602,20 @@ void UStudyHUDWidget::Refresh()
 			const int32 Total = GS->GetFinalCash();
 			const int32 Unsold = GS->GetFinalUnsoldCash();
 			const int32 Sold = Total - Unsold;
+			const int32 LoanDebt = GS->GetFinalLoanDebt();
 
 			SettlementCashText->SetText(FText::FromString(FText::AsNumber(Total).ToString()));
-			SettlementInfoText->SetText(FText::FromString(FString::Printf(
+
+			FString Info = FString::Printf(
 				TEXT("卖金所得 %d  +  未卖黄金折算 %d\n卸货 %d 趟"),
-				Sold, Unsold, GS->GetUnloadCount())));
+				Sold, Unsold, GS->GetUnloadCount());
+
+			if (LoanDebt > 0)
+			{
+				Info += FString::Printf(TEXT("\n欠黑社会 %d 币（已从最终金额里扣掉）"), LoanDebt);
+			}
+
+			SettlementInfoText->SetText(FText::FromString(Info));
 		}
 	}
 
