@@ -186,7 +186,7 @@ Deg = FMath::Fmod(Deg + 360.f, 360.f);
 | `bReadColorFromSurface` | ⬜ 关 | 需要轮盘有碰撞体才能用 |
 | `bSwapRedBlack` | ⬜ 关 | 红黑对调（调试用；几何表生效后不需要） |
 | `BallOuterCm / BallInnerCm / BallHeightCm` | 按网格自动算 | 球道半径与高度（cm） |
-| `GreenMultiplier` | 20 | 押绿命中返还倍数（真实轮盘是 36） |
+| `GreenMultiplier` | **36** | 押绿命中返还倍数（36 = 真实轮盘，庄家优势 2.7%；改成 20 就是 45.9%） |
 | `SpinDuration / RotorTurns` | 5 秒 / 4 圈 | 观感 |
 
 ## 6. 日志样例
@@ -207,7 +207,7 @@ Deg = FMath::Fmod(Deg + 360.f, 360.f);
 | 项 | 说明 |
 |---|---|
 | **报不出具体号码** | 号码是贴图，代码读不到像素。要报号码只有两条路：① 在 DCC 里把 36 格拆成 36 个材质；② 提供"0 号格中心在转子本地坐标的角度" |
-| 绿 20 倍的期望 | 54.1%（庄家优势 46%）。标准轮盘是 36 倍 = 97.3% |
+| 绿赔率 | 默认 36 倍（EV 97.3%，标准轮盘）。改成 20 倍则 EV 掉到 54.1% |
 | 球是代码轨迹，不是物理球 | 要真实弹跳需另做：物理球 + 结束前 0.8 秒吸附落格 |
 | 轮盘网格没有碰撞体 | 所以射线方案不可用；补上碰撞后 `bReadColorFromSurface` 即可启用 |
 | 玩家交互 | 复用了 `AMerchant` 的对话框系统（`EMerchantKind::Roulette`），走近按 E |

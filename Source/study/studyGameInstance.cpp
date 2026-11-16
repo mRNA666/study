@@ -18,7 +18,7 @@ void UstudyGameInstance::ResetRun()
 	Cash = StartingCash;
 	GoldGrams = 0.f;
 	StashedGoldGrams = 0.f;
-	BuyerQuotaGrams = BuyerQuotaPerDay;
+	BuyerQuotaGrams = BuyerQuotaPerSeason;
 	CampNoticeText.Reset();
 	bRunFinished = false;
 
@@ -36,6 +36,10 @@ void UstudyGameInstance::ResetRun()
 
 	// 贷款的欠款也要清零（不然重开一局还背着上一局的债）
 	LoanBalance = 0.f;
+
+	// 赛季统计
+	MyTrips = 0;
+	RouletteProfit = 0;
 
 	// 对手也要重新开局
 	InitRivals();
@@ -64,7 +68,14 @@ void UstudyGameInstance::SleepToNextDay()
 	DayIndex++;
 	ClockMinutes = DayStartMinutes;
 	RightsBoughtToday = 0;
-	BuyerQuotaGrams = BuyerQuotaPerDay;		// 正规买家第二天又有配额
+
+	// 正规买家的额度是"一季一个池子"，不是每天重刷：只减不增。
+	// 唯一例外是池子见底（不足 300 g）时，窗口开的这天补到 300 ——
+	// 否则季末会剩个几十克，窗口等于关着，玩家白等两天。
+	if (DayIndex % 2 == 0 && BuyerQuotaGrams < BuyerQuotaMinPerWindow)
+	{
+		BuyerQuotaGrams = BuyerQuotaMinPerWindow;
+	}
 	bBuyerRejectedToday = false;
 	RollDailyStrictness();
 
@@ -176,8 +187,8 @@ void UstudyGameInstance::TickRivals(float DeltaSeconds)
 		60.f / FMath::Max(RealSecondsPerGameHour, 1.f);
 	RivalClock += DeltaSeconds * GameMinutesPerSecond;
 
-	// 黑市价随时间恢复（每秒 0.0008 → 跌 6% 大约 75 秒回满）
-	BlackMarketMultiplier = FMath::Min(1.f, BlackMarketMultiplier + DeltaSeconds * 0.0008f);
+	// 黑市价随时间恢复（每秒 0.0012 → 跌 6% 大约 50 秒回满）
+	BlackMarketMultiplier = FMath::Min(1.f, BlackMarketMultiplier + DeltaSeconds * 0.0012f);
 
 	for (int32 i = 0; i < Rivals.Num(); ++i)
 	{
@@ -225,7 +236,9 @@ bool UstudyGameInstance::StepRivalAction(FRivalState& R)
 
 			const float Grams = Shelf[s].Item.NominalGrams;
 			if (R.Style == 0 && Grams > 60.f) { continue; }		// 铁头：只买便宜货
-			if (R.Style == 2 && Grams < 250.f) { continue; }	// 疤脸：只买大件
+			// 疤脸：只买大件。阈值原来是 250 g，但 v3.21 把工艺品标称重量整体 ÷4 之后，
+			// 最重的金像才 62~150 g —— 250 这个数让他一辈子买不到东西，等于这条支线死了。
+			if (R.Style == 2 && Grams < 60.f) { continue; }
 			Pickable.Add(s);
 		}
 
@@ -288,6 +301,43 @@ bool UstudyGameInstance::StepRivalAction(FRivalState& R)
 		return true;
 	}
 
+	// ---- 路径一·五：去轮盘赌一把（负 EV，但能制造波动，也给播报添戏） ----
+	if (R.Cash >= 2000 && FMath::FRand() < 0.12f)
+	{
+		// 下注比例按性格：铁头 10%（保守）/ 独眼 30%（赌徒）/ 疤脸 15%
+		const float Frac = (R.Style == 1) ? 0.30f : (R.Style == 2 ? 0.15f : 0.10f);
+		const int32 Bet = FMath::Clamp(FMath::RoundToInt(R.Cash * Frac), 200, 5000);
+
+		// 押什么：独眼偶尔押绿（博 20 倍），另外两个只押红黑
+		const int32 Color = (R.Style == 1 && FMath::FRand() < 0.25f) ? 2 : FMath::RandRange(0, 1);
+
+		const int32 Pocket = RollRoulettePocket();
+		const int32 PocketColor = RouletteColorOf(Pocket);
+
+		R.Cash -= Bet;
+		R.RoulettePlays++;
+
+		int32 Won = 0;
+		if (PocketColor == Color)
+		{
+			Won = Bet * (Color == 2 ? RouletteGreenMultiplier : 2);
+			R.Cash += Won;
+		}
+
+		R.RouletteProfit += (Won - Bet);
+
+		PushFeed(Won > 0
+			? FString::Printf(TEXT("%s 在轮盘押%s %d 币，中了 %d 币"), *R.Name, *RouletteColorText(Color), Bet, Won)
+			: FString::Printf(TEXT("%s 在轮盘押%s %d 币，输了"), *R.Name, *RouletteColorText(Color), Bet));
+
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 轮盘押%s %d → 摇出 %d（%s）%s %d 币"),
+			*R.Name, *RouletteColorText(Color), Bet, Pocket, *RouletteColorText(PocketColor),
+			Won > 0 ? TEXT("中") : TEXT("没中"), Won > 0 ? Won : Bet);
+
+		R.NextActionAt = RivalClock + FMath::FRandRange(40.f, 120.f);
+		return true;
+	}
+
 	// ---- 路径二：买开采权 → 下矿 → 卖 ----
 	const int32 RightPrice = 4000;
 	if (R.RightsToday < MaxMineRightsPerDay && R.Cash >= RightPrice)
@@ -297,36 +347,20 @@ bool UstudyGameInstance::StepRivalAction(FRivalState& R)
 		R.TripsDone++;
 
 		// 一次下矿的产量（按性格给不同区间）
+		// v3.24：整体上调到"一季 500~700 g"，玩家一季约 1500~2200 g，
+		// 这样他们靠 100% 的正规价才追得上玩家的量，排行榜才有压力。
 		float Gained = 0.f;
 		switch (R.Style)
 		{
-		case 1:  Gained = FMath::FRandRange(8.f, 18.f);  break;	// 独眼：波动最大
-		case 2:  Gained = FMath::FRandRange(7.f, 12.f);  break;	// 疤脸：偏高但慢
-		default: Gained = FMath::FRandRange(6.f, 10.f);  break;	// 铁头：平稳
+		case 1:  Gained = FMath::FRandRange(22.f, 35.f);  break;	// 独眼：波动最大
+		case 2:  Gained = FMath::FRandRange(26.f, 30.f);  break;	// 疤脸：偏高但慢
+		default: Gained = FMath::FRandRange(25.f, 29.f);  break;	// 铁头：平稳
 		}
 		R.StashGrams += Gained;
 
-		// 疤脸先囤货，攒到 20g 才出手
-		const bool bHold = (R.Style == 2 && R.StashGrams < 20.f);
-		if (!bHold)
-		{
-			const float Sold = R.StashGrams;
-			// 独眼走黑市（65%，还会砸价）；另外两个按正规价（100%）
-			const float Rate = (R.Style == 1)
-				? (0.65f * BlackMarketMultiplier)
-				: 1.0f;
-			R.Cash += FMath::RoundToInt(Sold * 1000.f * Rate);
-			R.StashGrams = 0.f;
-
-			if (R.Style == 1)
-			{
-				ApplyBlackMarketDump(Sold);
-			}
-			UE_LOG(LogTemp, Log, TEXT("[Rival] %s 卖了 %.1f g（x%.2f）→ 现金 %d"),
-				*R.Name, Sold, Rate, R.Cash);
-
-			PushFeed(FString::Printf(TEXT("%s 卖了 %.1f g"), *R.Name, Sold));
-		}
+		// 卖不卖、卖给谁、能不能抢到窗口，全在 SellRivalStash 里
+		SellRivalStash(R);
+		RivalRepayIfAble(R);
 
 		// 下一次行动的间隔（性格不同）
 		const float Gap = (R.Style == 1)
@@ -336,8 +370,133 @@ bool UstudyGameInstance::StepRivalAction(FRivalState& R)
 		return true;
 	}
 
-	// 什么都不成（路径三：没钱，等一会儿再说）
+	// ---- 路径三：连开采权都买不起了，就看手上囤的货能不能变现 ----
+	if (R.StashGrams > 0.01f)
+	{
+		const float Before = R.StashGrams;
+		SellRivalStash(R);
+		RivalRepayIfAble(R);
+		if (R.StashGrams < Before - 0.01f)
+		{
+			R.NextActionAt = RivalClock + FMath::FRandRange(40.f, 120.f);
+			return true;
+		}
+	}
+
+	// ---- 路径四：货也卖不掉、钱又不够 —— 去找黑社会借 ----
+	// 和玩家同一个黑社会、同一个日息、同一个额度上限。
+	// 没有这一条，"抢不到窗口的人"就会卡死在原地（疤脸之前就是这么僵住的）。
+	if (R.Cash < RightPrice && R.RightsToday < MaxMineRightsPerDay)
+	{
+		const int32 Room = LoanLimit - R.GetLoanOwed();
+		const int32 Amount = FMath::Min(6000, Room);		// 够买一两趟开采权 + 一点周转
+		if (Amount >= 1000)
+		{
+			R.Cash += Amount;
+			R.LoanBalance += static_cast<float>(Amount);
+
+			UE_LOG(LogTemp, Log, TEXT("[Rival] %s 找黑社会借了 %d 币（现在欠 %d）→ 现金 %d"),
+				*R.Name, Amount, R.GetLoanOwed(), R.Cash);
+			PushFeed(FString::Printf(TEXT("%s 找黑社会借了 %d 币"), *R.Name, Amount));
+
+			R.NextActionAt = RivalClock + FMath::FRandRange(60.f, 140.f);
+			return true;
+		}
+	}
+
+	// 什么都不成（没钱、没货，或者窗口还没开），等一会儿再说
 	return false;
+}
+
+void UstudyGameInstance::RivalRepayIfAble(FRivalState& R)
+{
+	// 日息 10% 拖着不还，比亏本还狠 —— 所以手头一宽裕，他也会先还债。
+	// 留 4000 现金当开采权的本钱，别把自己还成穷光蛋。
+	if (R.LoanBalance <= 0.f || R.Cash <= 4000)
+	{
+		return;
+	}
+
+	const int32 Pay = FMath::Min(R.Cash - 4000, R.GetLoanOwed());
+	if (Pay < 500)
+	{
+		return;
+	}
+
+	R.Cash -= Pay;
+	R.LoanBalance = FMath::Max(0.f, R.LoanBalance - static_cast<float>(Pay));
+
+	UE_LOG(LogTemp, Log, TEXT("[Rival] %s 还了 %d 币 → 还欠 %d，现金 %d"),
+		*R.Name, Pay, R.GetLoanOwed(), R.Cash);
+	PushFeed(FString::Printf(TEXT("%s 还了黑社会 %d 币"), *R.Name, Pay));
+}
+
+void UstudyGameInstance::SellRivalStash(FRivalState& R)
+{
+	if (R.StashGrams <= 0.01f)
+	{
+		return;
+	}
+
+	// ---- 独眼：只认黑市。不问窗口、不等价钱，卖了就砸 ----
+	if (R.Style == 1)
+	{
+		const float Sold = R.StashGrams;
+		// 他没有好感度系统，固定 0.65 折；同样受黑市硬地板约束（MinFencePrice）
+		const float Unit = FMath::Max(650.f * BlackMarketMultiplier, MinFencePrice);
+		R.Cash += FMath::RoundToInt(Sold * Unit);
+		R.StashGrams = 0.f;
+		ApplyBlackMarketDump(Sold);
+
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 卖了 %.1f g（黑市 %.0f 币/g）→ 现金 %d"),
+			*R.Name, Sold, Unit, R.Cash);
+		PushFeed(FString::Printf(TEXT("%s 卖了 %.1f g"), *R.Name, Sold));
+		return;
+	}
+
+	// ---- 疤脸：非攒够一堆不出手 ----
+	// 但"囤"有个前提：他还买得起开采权。否则会死锁 ——
+	// stash 不到 40 g 不肯卖、又没钱下矿，就永远卡在原地，资产再也不动。
+	// （实测：第 10 天起他的钱卡在 3 万上下，播报里一条他的消息都没有。）
+	if (R.Style == 2 && R.StashGrams < 40.f && R.Cash >= 4000)
+	{
+		return;
+	}
+
+	// ---- 铁头/疤脸：等正规买家的窗口（双数天），而且和玩家抢同一个池子 ----
+	// 谁先行动谁先舀 —— 所以他完全可能在你到柜台之前就把货交了。
+	if ((DayIndex % 2 == 0) && BuyerQuotaGrams > 0.5f)
+	{
+		const float Sold = FMath::Min(R.StashGrams, BuyerQuotaGrams);
+		BuyerQuotaGrams = FMath::Max(BuyerQuotaGrams - Sold, 0.f);
+		R.StashGrams -= Sold;
+		R.Cash += FMath::RoundToInt(Sold * 1000.f);
+
+		// 卖给正规买家也一样砸黑市价 —— 这条对四个人是同一条规则。
+		// 四条线一起往市场里倒金子，黑市价才会被真正压下去。
+		ApplyBlackMarketDump(Sold);
+
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 抢在窗口交了 %.1f g（全额）→ 现金 %d，池子剩 %.1f g"),
+			*R.Name, Sold, R.Cash, BuyerQuotaGrams);
+		PushFeed(FString::Printf(TEXT("%s 抢先交给正规买家 %.0f g（窗口还剩 %.0f g）"),
+			*R.Name, Sold, BuyerQuotaGrams));
+		return;
+	}
+
+	// 窗口没开、或者池子被别人舀空了。
+	// 手上还有钱就继续囤着等下一个窗口；连开采权都买不起，才去黑市贱卖。
+	if (R.Cash < 4000)		// 4000 = 路径二里的开采权价格
+	{
+		const float Sold = R.StashGrams;
+		const float Unit = FMath::Max(650.f * BlackMarketMultiplier, MinFencePrice);
+		R.Cash += FMath::RoundToInt(Sold * Unit);
+		R.StashGrams = 0.f;
+		ApplyBlackMarketDump(Sold);
+
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 等不到窗口，只能按黑市价卖 %.1f g（%.0f 币/g）→ 现金 %d"),
+			*R.Name, Sold, Unit, R.Cash);
+		PushFeed(FString::Printf(TEXT("%s 等不到窗口，把 %.0f g 贱卖了"), *R.Name, Sold));
+	}
 }
 
 void UstudyGameInstance::CatchUpRivals(float ElapsedGameMinutes)
@@ -631,10 +790,27 @@ FString UstudyGameInstance::GetFavorLabel() const
 float UstudyGameInstance::GetFencePricePerGram() const
 {
 	// 顺序固定：正规基准价 × 当天基础价 × 抛售砸价 × 好感系数（PRD §2.9 硬约束）
-	return static_cast<float>(AstudyGameState::BasePricePerGram)
+	const float Raw = static_cast<float>(AstudyGameState::BasePricePerGram)
 		* BlackMarketDailyRate
 		* BlackMarketMultiplier
 		* GetFavorFactor();
+
+	// v3.24：硬地板，而且地板本身跟着好感档走 ——
+	// 四个人一季往市场里倒两千多克，砸价会长期钉在 0.60，
+	// 要是四档拿同一个地板，好感度在后期就等于不存在了。
+	return FMath::Max(Raw, GetFenceFloorPrice());
+}
+
+float UstudyGameInstance::GetFenceFloorPrice() const
+{
+	//   老主顾 68% → 460 × 68/65 = 481
+	//   熟人   65% → 460（基准）
+	//   生面孔 58% → 440（内插，玩家没指定）
+	//   麻烦精 50% → 420（玩家指定：按比例本来是 354，和熟人的差得太狠）
+	if (FenceFavor >= 80) { return 481.f; }
+	if (FenceFavor >= 55) { return 460.f; }
+	if (FenceFavor >= 30) { return 440.f; }
+	return 420.f;
 }
 
 void UstudyGameInstance::RollDailyStrictness()
@@ -649,6 +825,36 @@ FString UstudyGameInstance::GetStrictnessHint() const
 	if (FenceStrictness < 0.40f) { return TEXT("跟平时一样，称得不算细"); }
 	if (FenceStrictness < 0.75f) { return TEXT("他今天手挺勤，翻来覆去地看"); }
 	return TEXT("他今天一直盯着秤，眼睛没离开过");
+}
+
+FString UstudyGameInstance::GetFenceMoodLine() const
+{
+	// 分段用的是"实际到手单价"（已经过 460 的硬地板），
+	// 所以最后一档就是地板价本身 —— 玩家听到这句话，就知道再等也不会更好了。
+	//   ≥720  极热（早期/刚回血）
+	//   640~  好价
+	//   560~  平常
+	//   500~  偏低
+	//   <500  地板（460 上下）
+	const float Unit = GetFencePricePerGram();
+
+	if (Unit >= 720.f)
+	{
+		return TEXT("「高价回收，急需黄金。」他把铜盘往前一推，「有多少拿多少来。」");
+	}
+	if (Unit >= 640.f)
+	{
+		return TEXT("「今天行情好。」他敲了两下秤沿，「要出手就趁现在。」");
+	}
+	if (Unit >= 560.f)
+	{
+		return TEXT("「老价钱。」他连头都没抬，「卖就快点，后面还排着人。」");
+	}
+	if (Unit >= 500.f)
+	{
+		return TEXT("「这两天送货的人多。」他掂了掂你的袋子，「价我压一点，你也别嫌。」");
+	}
+	return TEXT("「就这个价，你爱卖不卖。」他把秤往柜台上一搁，不再看你。");
 }
 
 float UstudyGameInstance::GetAdulterationCatchChance(float BrassGrams) const
@@ -741,6 +947,48 @@ int32 UstudyGameInstance::GetMyAssetTotal() const
 	return Total;
 }
 
+// ==================== 轮盘（玩家和 AI 共用同一套规则） ====================
+
+int32 UstudyGameInstance::RouletteColorOf(int32 Pocket)
+{
+	if (Pocket == 0)
+	{
+		return 2;	// 0 = 绿
+	}
+
+	static const int32 Reds[] =
+	{
+		1, 3, 5, 7, 9, 12, 14, 16, 18,
+		19, 21, 23, 25, 27, 30, 32, 34, 36
+	};
+
+	for (int32 N : Reds)
+	{
+		if (N == Pocket)
+		{
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+int32 UstudyGameInstance::RollRoulettePocket()
+{
+	return FMath::RandRange(0, 36);
+}
+
+FString UstudyGameInstance::RouletteColorText(int32 Color)
+{
+	switch (Color)
+	{
+	case 0:  return TEXT("红");
+	case 1:  return TEXT("黑");
+	case 2:  return TEXT("绿");
+	default: return TEXT("？");
+	}
+}
+
 // ==================== 黑社会的放数 ====================
 
 bool UstudyGameInstance::TakeLoan(int32 Amount)
@@ -798,6 +1046,19 @@ bool UstudyGameInstance::RepayLoan(int32 Amount)
 
 void UstudyGameInstance::ApplyDailyInterest()
 {
+	// 对手的债先滚（他们不看播报，所以只记日志）
+	for (FRivalState& R : Rivals)
+	{
+		if (R.LoanBalance <= 0.f)
+		{
+			continue;
+		}
+		const int32 Before = R.GetLoanOwed();
+		R.LoanBalance *= (1.f + LoanDailyRate);
+		UE_LOG(LogTemp, Log, TEXT("[Rival] %s 的利息 +%d → 欠款 %d"),
+			*R.Name, R.GetLoanOwed() - Before, R.GetLoanOwed());
+	}
+
 	if (!HasLoan())
 	{
 		return;

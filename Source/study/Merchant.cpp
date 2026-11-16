@@ -357,6 +357,16 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 			return;
 		}
 
+		// 池子被卖满（可能是铁头他们先舀光了）—— 收摊，别让玩家点了没反应
+		if (GI->BuyerQuotaGrams < 0.5f)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("「我的收购任务完成了，两天之后再来吧。」\n\n"
+					 "（这个窗口的额度已经卖满了 —— 铁头他们可能先动手了）"),
+				{ TEXT("知道了") });
+			return;
+		}
+
 		TArray<FString> Options;
 		Options.Add(TEXT("卖黄金"));
 		Options.Add(TEXT("卖工艺品"));
@@ -364,7 +374,7 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 
 		Character->OpenOptionDialog(DisplayName,
 			FString::Printf(
-				TEXT("正规价：100%%（不压价）\n今天还能收：%.1f g\n你手上有：%.1f g\n现金：%d 币\n\n他每次都抽检，掺了黄铜被抽到这一趟就白跑。"),
+				TEXT("正规价：100%%（不压价）\n本季还能收：%.1f g（四个人共用一个池子，先到先得）\n你手上有：%.1f g\n现金：%d 币\n\n他每次都抽检，掺了黄铜被抽到这一趟就白跑。"),
 				GI->BuyerQuotaGrams, GI->GoldGrams, GI->Cash),
 			Options);
 		return;
@@ -406,7 +416,8 @@ void AMerchant::BuildDialog(AstudyCharacter* Character)
 		Character->OpenOptionDialog(
 			DisplayName,
 			FString::Printf(
-				TEXT("手上的金重：%.1f g\n他给你的价：%.0f 币/g\n好感度：%d\n%s\n现金：%d 币%s"),
+				TEXT("%s\n\n手上的金重：%.1f g\n他给你的价：%.0f 币/g\n好感度：%d\n%s\n现金：%d 币%s"),
+				*GI->GetFenceMoodLine(),
 				GI->GoldGrams, GI->GetFencePricePerGram(), GI->FenceFavor,
 				*GI->GetStrictnessHint(), GI->Cash,
 				GI->GoldGrams < 0.05f ? TEXT("\n（身上没金子，先去矿里挖一趟）") : TEXT("")),
@@ -1106,7 +1117,7 @@ void AMerchant::SellGoldLegit(float Grams)
 	const float Sold = FMath::Min(Grams, FMath::Min(GI->GoldGrams, GI->BuyerQuotaGrams));
 	if (Sold <= 0.f)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：今天收不了更多了（配额剩 %.1f g）"), *DisplayName, GI->BuyerQuotaGrams);
+		UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：这一季收不了更多了（池子剩 %.1f g）"), *DisplayName, GI->BuyerQuotaGrams);
 		return;
 	}
 
@@ -1115,6 +1126,11 @@ void AMerchant::SellGoldLegit(float Grams)
 	GI->GoldGrams -= Sold;
 	GI->BuyerQuotaGrams -= Sold;
 	GI->Cash += Earned;
+
+	// v3.24：走正规渠道也会砸黑市价。
+	// 以前只有黑市那条线在砸，于是"卖正规"成了一条免砸价通道 ——
+	// 打捞出来的金子总得流进同一个市场，两个渠道一起砸，金价才是"市场"。
+	GI->ApplyBlackMarketDump(Sold);
 
 	// 2D：柜台就在面前，不需要衰减定位
 	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
@@ -1165,15 +1181,15 @@ void AMerchant::OpenGoldSellPage(AstudyCharacter* Character)
 	if (bToLegit)
 	{
 		Body += FString::Printf(
-			TEXT("他按正规价 100%% 收，今天还能收 %.1f g。\n"
+			TEXT("他按正规价 100%% 收，本季还剩 %.1f g 的额度。\n"
 				 "他每次都抽检 —— 掺了黄铜被抽到，这一包退回来，今天这个窗口就没了。"),
 			GI->BuyerQuotaGrams);
 	}
 	else
 	{
 		Body += FString::Printf(
-			TEXT("他给你的价：%.0f 币/g\n好感度 %d\n%s"),
-			GI->GetFencePricePerGram(), GI->FenceFavor, *GI->GetStrictnessHint());
+			TEXT("%s\n\n他给你的价：%.0f 币/g\n好感度 %d\n%s"),
+			*GI->GetFenceMoodLine(), GI->GetFencePricePerGram(), GI->FenceFavor, *GI->GetStrictnessHint());
 	}
 
 	Body += FString::Printf(TEXT("\n\n黄铜 %d 币/g，按掺进去的克数现钱扣。"),
@@ -1380,6 +1396,7 @@ void AMerchant::SettleGoldSale(AstudyCharacter* Character, float SellGrams, floa
 
 			GI->Cash += FMath::RoundToInt(Accepted * static_cast<float>(AstudyGameState::BasePricePerGram));
 			GI->BuyerQuotaGrams = FMath::Max(GI->BuyerQuotaGrams - Accepted, 0.f);
+			GI->ApplyBlackMarketDump(Accepted);		// v3.24：正规渠道也砸价（见 SellGoldLegit）
 
 			// 配额不够时，剩下的真金还给你（按比例，简化）
 			if (Accepted < Declared - 0.01f)
@@ -1477,9 +1494,32 @@ bool AMerchant::BuyMineRight()
 
 	GI->Cash -= MineRightPrice;
 	GI->RightsBoughtToday++;
+	GI->MyTrips++;
 
 	// 2D：柜台就在面前，不需要衰减定位
 	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
+	EnterMine();
+
+	const int32 StartH = FMath::FloorToInt(GI->ClockMinutes / 60.f);
+	const int32 StartM = FMath::FloorToInt(GI->ClockMinutes) % 60;
+	const int32 StopH = FMath::FloorToInt(GI->MineStopClockMinutes / 60.f);
+	const int32 StopM = FMath::FloorToInt(GI->MineStopClockMinutes) % 60;
+
+	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：开采权买到（今天第 %d/%d 次，花了 %d 币），%02d:%02d 采到 %02d:%02d"),
+		*DisplayName, GI->RightsBoughtToday, UstudyGameInstance::MaxMineRightsPerDay, MineRightPrice,
+		StartH, StartM, StopH, StopM);
+
+	return true;
+}
+
+void AMerchant::EnterMine()
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI)
+	{
+		return;
+	}
 
 	// 一次开采 3 分钟（真实时间）。
 	// 换算成游戏分钟必须跟着流速走：游戏分钟 = 真实秒 × (60 / RealSecondsPerGameHour)。
@@ -1493,16 +1533,38 @@ bool AMerchant::BuyMineRight()
 		GI->ClockMinutes + UstudyGameInstance::MineDurationSeconds * GameMinutesPerSecond,
 		UstudyGameInstance::DayEndMinutes);
 
-	const int32 StartH = FMath::FloorToInt(GI->ClockMinutes / 60.f);
-	const int32 StartM = FMath::FloorToInt(GI->ClockMinutes) % 60;
-	const int32 StopH = FMath::FloorToInt(GI->MineStopClockMinutes / 60.f);
-	const int32 StopM = FMath::FloorToInt(GI->MineStopClockMinutes) % 60;
-
-	UE_LOG(LogTemp, Log, TEXT("[Merchant] %s：开采权买到（今天第 %d/%d 次，花了 %d 币），%02d:%02d 采到 %02d:%02d"),
-		*DisplayName, GI->RightsBoughtToday, UstudyGameInstance::MaxMineRightsPerDay, MineRightPrice,
-		StartH, StartM, StopH, StopM);
-
 	UGameplayStatics::OpenLevel(this, FName(TEXT("Mine1")));
+}
+
+bool AMerchant::GoMineOnLoan(AstudyCharacter* Character)
+{
+	UstudyGameInstance* GI = GetRun(this);
+	if (!GI)
+	{
+		return false;
+	}
+
+	// 今天的开采权已经用完了：借了也下不去，别骗玩家
+	if (GI->RightsBoughtToday >= UstudyGameInstance::MaxMineRightsPerDay)
+	{
+		BankWarning = TEXT("今天的开采权你已经用完了，借给你也下不去。明天再来。");
+		BankFlow = 0;
+		BuildBankDialog(Character);
+		return false;
+	}
+
+	// 这 4000 不走现金：等于他直接替你把这一趟开采权买了，钱记在账上。
+	GI->LoanBalance += static_cast<float>(MineRightPrice);
+	GI->RightsBoughtToday++;
+	GI->MyTrips++;
+
+	UE_LOG(LogTemp, Log, TEXT("[Bank] 黑社会垫了一趟开采权（%d 币记债）→ 欠款 %d，现金 %d"),
+		MineRightPrice, GI->GetLoanOwed(), GI->Cash);
+	GI->PushFeed(FString::Printf(TEXT("黑社会替你买了一趟开采权，欠款 +%d"), MineRightPrice));
+
+	UGameplayStatics::PlaySound2D(this, StudySounds::Cash(), 0.9f);
+
+	EnterMine();
 	return true;
 }
 
@@ -1567,6 +1629,34 @@ void AMerchant::BuildBankDialog(AstudyCharacter* Character)
 		return;
 	}
 
+	// ---------- 应急页：额度顶死 + 连一趟开采权都买不起 ----------
+	// 玩家走到这一步是真的没路走了：不能借、不能挖、也没有货可卖。
+	// 他不白给钱 —— 他替你买一趟开采权，钱直接记在账上，然后把你送下去。
+	if (BankFlow == 3)
+	{
+		Character->SetDialogNumberEnabled(0.f);
+
+		if (GI->RightsBoughtToday >= UstudyGameInstance::MaxMineRightsPerDay)
+		{
+			Character->OpenOptionDialog(DisplayName,
+				TEXT("「今天的开采权你也用完了，我借给你也下不去。」\n\n"
+					 "（明天再来找我，或者先去把身上的金卖了）"),
+				{ TEXT("知道了") });
+			return;
+		}
+
+		Character->OpenOptionDialog(DisplayName,
+			FString::Printf(
+				TEXT("「钱是没有了，额度也给你顶死了。」他把账本翻过去一页。\n\n"
+					 "「但我还能再借你 %d —— 够一趟开采权。这一趟我替你买了，直接送你下去。」\n"
+					 "「挖到了先还我。别想着跑，这镇子就这么大。」\n\n"
+					 "现金：%d 币\n欠款：%d 币（下去之后 %d 币）\n日息 %d%%，利滚利。"),
+				MineRightPrice, GI->Cash, GI->GetLoanOwed(),
+				GI->GetLoanOwed() + MineRightPrice, Rate),
+			{ TEXT("行，我去"), TEXT("算了") });
+		return;
+	}
+
 	// ---------- 贷款页 ----------
 	if (BankFlow == 1)
 	{
@@ -1575,6 +1665,14 @@ void AMerchant::BuildBankDialog(AstudyCharacter* Character)
 		// 已经顶到额度了：别让玩家填一个注定失败的数，直接说清楚
 		if (Room <= 0)
 		{
+			// 顶死额度 + 连一趟开采权都买不起 → 换成"我替你买一趟"的应急页
+			if (GI->Cash < MineRightPrice)
+			{
+				BankFlow = 3;
+				BuildBankDialog(Character);
+				return;
+			}
+
 			BankWarning = FString::Printf(TEXT("你已经欠了 %d 币，到额度上限了，先还上再说。"), GI->GetLoanOwed());
 			BankFlow = 0;
 			BuildBankDialog(Character);
@@ -1647,6 +1745,20 @@ void AMerchant::HandleBankOption(AstudyCharacter* Character, int32 Index)
 	UstudyGameInstance* GI = GetRun(this);
 	if (!GI || !Character)
 	{
+		return;
+	}
+
+	// 应急页：[行，我去] [算了]
+	if (BankFlow == 3)
+	{
+		if (Index == 0)
+		{
+			GoMineOnLoan(Character);
+			return;
+		}
+
+		BankFlow = 0;
+		BuildBankDialog(Character);
 		return;
 	}
 

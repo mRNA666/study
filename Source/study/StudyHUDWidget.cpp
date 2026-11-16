@@ -180,7 +180,15 @@ void UStudyHUDWidget::BuildLayout()
 	{
 		UVerticalBox* Box = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 
-		Box->AddChildToVerticalBox(MakeText(WidgetTree, TEXT("本局结束"), 34, FLinearColor(1.f, 0.95f, 0.85f, 1.f), true));
+		Box->AddChildToVerticalBox(MakeText(WidgetTree, TEXT("本 局 结 束"), 34, FLinearColor(1.f, 0.95f, 0.85f, 1.f), true));
+
+		// 称号（按这局的风格挑一个）
+		SettlementTitleText = MakeText(WidgetTree, TEXT(""), 26, FLinearColor(1.f, 0.85f, 0.4f, 1.f), true);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(SettlementTitleText)))
+		{
+			S->SetPadding(FMargin(0.f, 2.f, 0.f, 12.f));
+		}
+
 		Box->AddChildToVerticalBox(MakeText(WidgetTree, TEXT("最终现金"), 18, Dim));
 
 		SettlementCashText = MakeText(WidgetTree, TEXT("0"), 44, Gold, true);
@@ -192,7 +200,23 @@ void UStudyHUDWidget::BuildLayout()
 			S->SetPadding(FMargin(0.f, 10.f, 0.f, 0.f));
 		}
 
-		Box->AddChildToVerticalBox(MakeText(WidgetTree, TEXT("按  R  再来一局"), 22, FLinearColor(1.f, 0.85f, 0.4f, 1.f), true));
+		// 四行名次：自己 + 三个对手
+		Box->AddChildToVerticalBox(MakeText(WidgetTree, TEXT("资 产 排 行"), 18, Dim));
+		for (int32 i = 0; i < 4; ++i)
+		{
+			UTextBlock* Line = MakeText(WidgetTree, TEXT(""), 20, FLinearColor(0.9f, 0.9f, 0.95f, 1.f));
+			if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(Line)))
+			{
+				S->SetPadding(FMargin(0.f, 1.f, 0.f, 1.f));
+			}
+			SettlementRankTexts.Add(Line);
+		}
+
+		UTextBlock* RestartHint = MakeText(WidgetTree, TEXT("按  R  再来一局"), 22, FLinearColor(1.f, 0.85f, 0.4f, 1.f), true);
+		if (UVerticalBoxSlot* S = Cast<UVerticalBoxSlot>(Box->AddChildToVerticalBox(RestartHint)))
+		{
+			S->SetPadding(FMargin(0.f, 14.f, 0.f, 0.f));
+		}
 
 		SettlementBorder->SetContent(Box);
 	}
@@ -616,6 +640,163 @@ void UStudyHUDWidget::Refresh()
 			}
 
 			SettlementInfoText->SetText(FText::FromString(Info));
+
+			// ---- 称号 + 四行名次（季末不再模糊，四个人都给准确值） ----
+			if (UstudyGameInstance* Run = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this)))
+			{
+				struct FSettleEntry
+				{
+					FString Name;
+					int32 Asset = 0;
+					int32 Cash = 0;
+					int32 Crafts = 0;
+					int32 Trips = 0;
+					int32 RouletteProfit = 0;
+					int32 Style = -1;		// 对手性格；自己 = -1
+					bool bMe = false;
+					FString Title;
+				};
+
+				TArray<FSettleEntry> List;
+
+				{
+					FSettleEntry Me;
+					Me.Name = TEXT("你");
+					Me.Asset = Run->GetMyAssetTotal();
+					Me.Cash = Run->Cash;
+					Me.Crafts = Run->HandicraftBag.Num();
+					Me.Trips = Run->MyTrips;
+					Me.RouletteProfit = Run->RouletteProfit;
+					Me.bMe = true;
+					List.Add(Me);
+				}
+
+				for (int32 i = 0; i < Run->Rivals.Num(); ++i)
+				{
+					const FRivalState& R = Run->Rivals[i];
+
+					FSettleEntry E;
+					E.Name = R.Name;
+					E.Asset = Run->GetRivalAssetTotal(i);
+					E.Cash = R.Cash;
+					E.Crafts = R.Handicraft.Num();
+					E.Trips = R.TripsDone;
+					E.RouletteProfit = R.RouletteProfit;
+					E.Style = R.Style;
+					List.Add(E);
+				}
+
+				// 名次：资产高的在前
+				List.Sort([](const FSettleEntry& A, const FSettleEntry& B) { return A.Asset > B.Asset; });
+
+				// ---- 称号第一轮：四项"专项第一"，每人最多一个 ----
+				auto GiveLeaderTitle = [&List](auto Getter, const TCHAR* InTitle)
+				{
+					int32 Best = INDEX_NONE;
+					int32 BestVal = 0;
+					for (int32 i = 0; i < List.Num(); ++i)
+					{
+						if (!List[i].Title.IsEmpty())
+						{
+							continue;	// 已经有头衔了
+						}
+
+						const int32 V = Getter(List[i]);
+						if (V > BestVal)
+						{
+							BestVal = V;
+							Best = i;
+						}
+					}
+
+					if (Best != INDEX_NONE)
+					{
+						List[Best].Title = InTitle;
+					}
+				};
+
+				// 先给资产第一（名次和称号要对得上），再给三项专项第一
+				GiveLeaderTitle([](const FSettleEntry& E) { return E.Asset; }, TEXT("本季第一"));
+				GiveLeaderTitle([](const FSettleEntry& E) { return E.Trips; }, TEXT("挖得最多的那个"));
+				GiveLeaderTitle([](const FSettleEntry& E) { return E.Crafts; }, TEXT("柜台前的捡漏王"));
+				GiveLeaderTitle([](const FSettleEntry& E) { return E.Cash; }, TEXT("现金最多的那个"));
+				GiveLeaderTitle([](const FSettleEntry& E) { return E.RouletteProfit >= 3000 ? E.RouletteProfit : 0; }, TEXT("赌桌上的赢家"));
+
+				// ---- 第二轮：玩家专项（还没拿到头衔才给） ----
+				for (FSettleEntry& E : List)
+				{
+					if (!E.bMe || !E.Title.IsEmpty())
+					{
+						continue;
+					}
+
+					if (LoanDebt > 0)
+					{
+						E.Title = TEXT("债台高筑");
+					}
+					else if (Run->FenceFavor >= 80)
+					{
+						E.Title = TEXT("黑市的老主顾");
+					}
+					else
+					{
+						E.Title = TEXT("活着走到最后的人");
+					}
+				}
+
+				// ---- 第三轮：对手按性格兜底（和 AI 的行为对得上） ----
+				for (FSettleEntry& E : List)
+				{
+					if (E.bMe || !E.Title.IsEmpty())
+					{
+						continue;
+					}
+
+					switch (E.Style)
+					{
+					case 0:  E.Title = TEXT("只买便宜货的铁头"); break;
+					case 1:  E.Title = TEXT("敢下注的独眼");     break;
+					case 2:  E.Title = TEXT("囤大件的疤脸");     break;
+					default: E.Title = TEXT("陪跑到最后");       break;
+					}
+				}
+
+				// 面板顶部显示"我的称号"
+				for (const FSettleEntry& E : List)
+				{
+					if (E.bMe && SettlementTitleText)
+					{
+						SettlementTitleText->SetText(FText::FromString(
+							FString::Printf(TEXT("「%s」"), *E.Title)));
+						break;
+					}
+				}
+
+				// 四行：名次 + 名字 + **准确资产** + 称号
+				for (int32 i = 0; i < SettlementRankTexts.Num(); ++i)
+				{
+					UTextBlock* Line = SettlementRankTexts[i];
+					if (!Line)
+					{
+						continue;
+					}
+
+					if (!List.IsValidIndex(i))
+					{
+						Line->SetText(FText::GetEmpty());
+						continue;
+					}
+
+					const FSettleEntry& E = List[i];
+
+					Line->SetText(FText::FromString(FString::Printf(
+						TEXT("%d.  %-6s  %d   「%s」"), i + 1, *E.Name, E.Asset, *E.Title)));
+
+					Line->SetColorAndOpacity(FSlateColor(E.bMe
+						? FLinearColor(1.f, 0.85f, 0.4f, 1.f)
+						: FLinearColor(0.85f, 0.85f, 0.9f, 1.f)));
+				}
+			}
 		}
 	}
 

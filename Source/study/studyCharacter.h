@@ -182,6 +182,13 @@ protected:
 	UFUNCTION(Exec)
 	void StudyInputState();
 
+	/**
+	 * 控制台输入 StudySettle：**立刻结算这一局**（不用真玩满 12 天）。
+	 * 用来验证结算面板的称号和四行名次。
+	 */
+	UFUNCTION(Exec)
+	void StudySettle();
+
 public:
 	/** 设置头灯亮度倍数（1 = 默认）。ESC 菜单里的滑块调这个 */
 	UFUNCTION(BlueprintCallable, Category = "HeadLight")

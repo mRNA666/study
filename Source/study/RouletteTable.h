@@ -153,9 +153,9 @@ public:
 
 	// ---------------- 赌注参数 ----------------
 
-	/** 押绿命中返还几倍（真实轮盘是 36，等于 2.7% 庄家优势） */
+	/** 押绿命中返还几倍（真实轮盘 36 倍 = 2.7% 庄家优势） */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Roulette|Rules")
-	int32 GreenMultiplier = 20;
+	int32 GreenMultiplier = 36;
 
 	/** 一次转多久（秒） */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Roulette|Rules")

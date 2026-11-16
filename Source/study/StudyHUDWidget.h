@@ -105,6 +105,12 @@ protected:
 	UPROPERTY() TObjectPtr<UTextBlock> SettlementCashText;
 	UPROPERTY() TObjectPtr<UTextBlock> SettlementInfoText;
 
+	/** 结算面板上的「称号」（如「挖得最多的那个」） */
+	UPROPERTY() TObjectPtr<UTextBlock> SettlementTitleText;
+
+	/** 结算面板上的四行名次（自己 + 三个对手） */
+	UPROPERTY() TArray<TObjectPtr<UTextBlock>> SettlementRankTexts;
+
 	UPROPERTY() TObjectPtr<UBorder> DialogBorder;
 	UPROPERTY() TObjectPtr<UTextBlock> DialogTitleText;
 	UPROPERTY() TObjectPtr<UTextBlock> DialogBodyText;

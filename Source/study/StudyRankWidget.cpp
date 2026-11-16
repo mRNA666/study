@@ -218,10 +218,12 @@ void UStudyRankWidget::Refresh()
 
 	if (MarketText)
 	{
-		// 和黑商对话框里那行必须一模一样：当天基础价 x 抛售乘数
-		const float EffectiveRate = GI->BlackMarketDailyRate * GI->BlackMarketMultiplier;
+		// 和黑商对话框里那行必须一模一样：显示的必须是"实际到手单价"（含硬地板）。
+		// 以前显示的是"正规价的百分之多少"，加了地板之后会和真实报价对不上。
 		MarketText->SetText(FText::FromString(FString::Printf(
-			TEXT("黑市价：正规价的 %.0f%%（今天基础 %.0f%%，有人抛售还会被砸下来）"),
-			EffectiveRate * 100.f, GI->BlackMarketDailyRate * 100.f)));
+			TEXT("黑市价：%d 币/g（今日基础 %.0f%%，有人抛售还会被砸，地板 %d）"),
+			FMath::RoundToInt(GI->GetFencePricePerGram()),
+			GI->BlackMarketDailyRate * 100.f,
+			FMath::RoundToInt(GI->GetFenceFloorPrice()))));
 	}
 }

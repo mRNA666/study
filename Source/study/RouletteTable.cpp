@@ -34,24 +34,7 @@ namespace
 		5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26
 	};
 
-	/** 红色格号（其余非 0 的都是黑） */
-	bool IsRedNumber(int32 Number)
-	{
-		static const int32 Reds[] =
-		{
-			1, 3, 5, 7, 9, 12, 14, 16, 18,
-			19, 21, 23, 25, 27, 30, 32, 34, 36
-		};
-
-		for (int32 R : Reds)
-		{
-			if (R == Number)
-			{
-				return true;
-			}
-		}
-		return false;
-	}
+	/** 红色格号（其余非 0 的都是黑） —— 现在统一由 UstudyGameInstance::RouletteColorOf 提供 */
 }
 
 ARouletteTable::ARouletteTable()
@@ -61,6 +44,7 @@ ARouletteTable::ARouletteTable()
 	DisplayName = TEXT("轮盘赌台");
 	InteractRadiusCm = 320.f;
 	bHideBody = true;
+
 
 	// 商人默认不 tick；轮盘要转，必须开
 	PrimaryActorTick.bCanEverTick = true;
@@ -144,6 +128,13 @@ void ARouletteTable::BeginPlay()
 
 	BuildColorTableFromMesh();
 	RecomputeBallOrbit();
+
+	// 把自己的绿赔率推给 GameInstance，让 AI 也用同一个数（一处配置，两边一致）
+	if (UstudyGameInstance* Run = Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(this)))
+	{
+		Run->RouletteGreenMultiplier = GreenMultiplier;
+		UE_LOG(LogTemp, Log, TEXT("[Roulette] 绿赔率 = %d 倍（AI 也用这个数）"), GreenMultiplier);
+	}
 }
 
 void ARouletteTable::OnConstruction(const FTransform& Transform)
@@ -1023,6 +1014,9 @@ void ARouletteTable::FinishSpin()
 	const bool bWon = (FinalColor == PendingColor);
 	PendingPayout = bWon ? (PendingBet * (PendingColor == 2 ? GreenMultiplier : 2)) : 0;
 
+	// 赛季统计：净盈亏（赢了是 +返还-押注，输了是 -押注）
+	GI->RouletteProfit += (PendingPayout - PendingBet);
+
 	if (bWon)
 	{
 		GI->Cash += PendingPayout;
@@ -1115,12 +1109,8 @@ void ARouletteTable::FinishSpin()
 
 int32 ARouletteTable::PocketColorOf(int32 Number)
 {
-	if (Number == 0)
-	{
-		return 2;	// 0 = 绿
-	}
-
-	return IsRedNumber(Number) ? 0 : 1;
+	// 和 AI 共用同一份规则（UstudyGameInstance::RouletteColorOf），避免两边算得不一样
+	return UstudyGameInstance::RouletteColorOf(Number);
 }
 
 FString ARouletteTable::ColorName(int32 Color)

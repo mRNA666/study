@@ -125,6 +125,23 @@ void UStudyMenuWidget::BuildLayout()
 	MenuUIRow(MainPage, MenuUIText(WidgetTree, TEXT("脏  金"), 88, Gold, true), 0.f);
 	MenuUIRow(MainPage, MenuUIText(WidgetTree, TEXT("D I R T Y   G O L D"), 20, Dim), 4.f);
 
+	// 玩法简介：一屏说清"这是什么游戏、按什么键"
+	{
+		USpacer* GapIntro = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
+		GapIntro->SetSize(FVector2D(0.f, 24.f));
+		MenuUIRow(MainPage, GapIntro, 0.f);
+
+		MenuUIRow(MainPage, MenuUIText(WidgetTree,
+			TEXT("12 天的淘金季，谁的资产最多谁就赢。\n")
+			TEXT("下矿凿岩挖金 → 卖给黑市（能掺黄铜，但可能被抓）\n")
+			TEXT("正规买家每两天开一次窗口：全额收，但会抽检\n")
+			TEXT("工艺品：黑市柜台赌含金量，听泉鉴宝花 500 验一件\n")
+			TEXT("差钱：找黑社会借（日息 10%，利滚利），或者去轮盘赌一把\n")
+			TEXT("\n")
+			TEXT("WASD 移动 · 左键挖矿 · E 交互 · B 背包 · Tab 排行 · T 头灯 · Esc 菜单"),
+			15, Dim), 6.f);
+	}
+
 	USpacer* GapMain = WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass());
 	GapMain->SetSize(FVector2D(0.f, 46.f));
 	MenuUIRow(MainPage, GapMain, 0.f);

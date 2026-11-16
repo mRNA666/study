@@ -118,14 +118,32 @@ struct FRivalState
 	UPROPERTY(BlueprintReadOnly, Category = "Rival")
 	int32 TripsDone = 0;
 
+	/** 他玩轮盘的净盈亏（结算称号「赌桌上的赢家」也和玩家比这个） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 RouletteProfit = 0;
+
+	/** 他在轮盘上玩过几把（日志/调试用） */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	int32 RoulettePlays = 0;
+
 	/** 他手上囤着的工艺品（买了就压着，卖正规买家能拿真实价值） */
 	UPROPERTY(BlueprintReadOnly, Category = "Rival")
 	TArray<FHandicraftItem> Handicraft;
 
-	/** 资产口径：现金 + 囤着的金按正规价折算（工艺品另算，见 UstudyGameInstance::SumCraftValue） */
+	/**
+	 * 他也欠黑社会的钱（v3.24）。
+	 * 没钱买开采权时他会去借，日息和玩家一样 10%，利滚利，一季上限也一样。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Rival")
+	float LoanBalance = 0.f;
+
+	/** 他欠多少（含已经滚进去的利息） */
+	int32 GetLoanOwed() const { return FMath::RoundToInt(LoanBalance); }
+
+	/** 资产口径：现金 + 囤着的金按正规价折算 - 欠款（工艺品另算，见 UstudyGameInstance::SumCraftValue） */
 	int32 GetAssetTotal() const
 	{
-		return Cash + FMath::RoundToInt(StashGrams * 1000.f);
+		return Cash + FMath::RoundToInt(StashGrams * 1000.f) - GetLoanOwed();
 	}
 };
 
@@ -176,9 +194,23 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
 	float StashedGoldGrams = 0.f;
 
-	/** 正规买家今天还能收多少克（每天刷新） */
+	/**
+	 * 正规买家本季还能收多少克。
+	 * v3.24：从"每场 3000 g、每天重刷"改成"一季一个共享池子，只减不增"，
+	 * 池子见底（不足 300 g）时，下一个窗口补到 300 —— 免得季末剩个几十克的碎额度。
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
-	float BuyerQuotaGrams = 3000.f;
+	float BuyerQuotaGrams = 2000.f;
+
+	// ---------------- 赛季统计（结算时出称号） ----------------
+
+	/** 这局总共下过几次矿（买开采权就算一次） */
+	UPROPERTY(BlueprintReadOnly, Category = "Stats")
+	int32 MyTrips = 0;
+
+	/** 轮盘赌的净盈亏（赢了 +返还-押注，输了 -押注）。称号「赌得最赚」用它 */
+	UPROPERTY(BlueprintReadOnly, Category = "Stats")
+	int32 RouletteProfit = 0;
 
 	// ---------------- 黑社会的放数（黑社会） ----------------
 
@@ -215,6 +247,25 @@ public:
 
 	/** 换天时滚利息（SleepToNextDay 里调一次） */
 	void ApplyDailyInterest();
+
+	// ---------------- 轮盘（AI 也会去玩，和玩家同一套概率） ----------------
+
+	/**
+	 * 押绿命中返还几倍（默认 36 = 真实轮盘，庄家优势只有 2.7%）。
+	 * 这不是常量：场景里那台轮盘会把自己的 GreenMultiplier 推过来，
+	 * 这样"玩家调一个数"和"AI 用同一个数"永远一致（没有轮盘时用这个默认值）。
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Loan")
+	int32 RouletteGreenMultiplier = 36;
+
+	/** 欧式 37 格：0 = 绿，其余 18 红 18 黑。返回 0 红 / 1 黑 / 2 绿 */
+	static int32 RouletteColorOf(int32 Pocket);
+
+	/** 摇一个格号（0-36），每格等概率 */
+	static int32 RollRoulettePocket();
+
+	/** 颜色文字（红/黑/绿），播报和日志用 */
+	static FString RouletteColorText(int32 Color);
 
 	/** 回到营地时要在屏幕上弹的一句话（空 = 不弹） */
 	UPROPERTY(BlueprintReadOnly, Category = "Run")
@@ -294,6 +345,12 @@ public:
 	/** 严格度的口语提示（他今天称得松 / 就那样 / 手挺勤 / 盯着你看） */
 	FString GetStrictnessHint() const;
 
+	/**
+	 * 黑商今天的态度 —— 按"实际到手单价"分段的一句台词（v3.24）。
+	 * 高价时他急，地板价时他横；玩家不用看数字也能听出今天该不该卖。
+	 */
+	FString GetFenceMoodLine() const;
+
 	/** 好感度 → 收购价系数（PRD 四档 68/65/58/50 除以 65） */
 	float GetFavorFactor() const;
 
@@ -303,8 +360,14 @@ public:
 	/** 该档位对应的收购价（68 / 65 / 58 / 50，正规价的百分比） */
 	int32 GetFavorPercent() const;
 
-	/** 今天黑市真正到手的单价 = 1000 × 当天基础价 × 砸价 × 好感 */
+	/** 今天黑市真正到手的单价 = 1000 × 当天基础价 × 砸价 × 好感，最低不低于 GetFenceFloorPrice() */
 	float GetFencePricePerGram() const;
+
+	/**
+	 * 黑市回收价的地板 —— 按好感档分段（老主顾 481 / 熟人 460 / 生面孔 440 / 麻烦精 420）。
+	 * 市场被砸到底的时候，四档要是拿同一个价，好感度就白做了。
+	 */
+	float GetFenceFloorPrice() const;
 
 	/** 换天时重掷严格度（第 1 天恒 0） */
 	void RollDailyStrictness();
@@ -401,6 +464,16 @@ public:
 	bool StepRivalAction(FRivalState& R);
 
 	/**
+	 * 对手把手上的黄金出手。
+	 * 独眼只走黑市；铁头和疤脸等正规买家的窗口（双数天），
+	 * 而且要从玩家那个共享池子里抢 —— 抢不到又缺钱时，只能去黑市贱卖。
+	 */
+	void SellRivalStash(FRivalState& R);
+
+	/** 对手手头宽裕时先还债（日息 10%，拖着比亏本还狠） */
+	void RivalRepayIfAble(FRivalState& R);
+
+	/**
 	 * 玩家提前睡觉、跳过今天剩下的白天时调用：把这段时间里对手本该做的事补上。
 	 * 不补的话，"睡觉跳天"会把对手的时间冻结 —— 那是免费的时间机器。
 	 */
@@ -433,11 +506,21 @@ public:
 	/** 开局启动资金（币）。够买一次开采权，之后要靠卖金赚 */
 	static constexpr int32 StartingCash = 4000;
 
-	/** 正规买家每场能收多少克足金（PRD §2.9） */
-	static constexpr float BuyerQuotaPerDay = 3000.f;
+	/** 正规买家一季总共能收多少克足金（PRD §2.9：全场共享池子，先到先得） */
+	static constexpr float BuyerQuotaPerSeason = 2000.f;
+
+	/** 池子不足这个数时，下一个窗口补到它（避免季末只剩碎额度、窗口形同虚设） */
+	static constexpr float BuyerQuotaMinPerWindow = 300.f;
 
 	/** 20:00 还在矿洞里，向导来接你的路费 */
 	static constexpr int32 LatePickupFee = 2000;
+
+	/**
+	 * 黑市回收价的硬地板（币/克）。
+	 * 四个人一季往市场里倒两千多克，砸价会长期钉在 0.60，
+	 * 没有地板的话季末黑市只给 330 左右，挖矿这条主线就废了。
+	 */
+	static constexpr float MinFencePrice = 460.f;
 
 	// ---------------- 操作 ----------------
 

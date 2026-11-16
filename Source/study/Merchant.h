@@ -183,7 +183,7 @@ protected:
 
 	// ---------------- 黑社会（Kind == Banker） ----------------
 
-	/** 0 = 主菜单，1 = 贷款页，2 = 还款页 */
+	/** 0 = 主菜单，1 = 贷款页，2 = 还款页，3 = 应急页（额度顶死 + 没钱下矿） */
 	int32 BankFlow = 0;
 
 	/** 黑社会页面顶部的警告（显示一次就清空） */
@@ -193,6 +193,15 @@ protected:
 	void BuildBankDialog(AstudyCharacter* Character);
 	void HandleBankOption(AstudyCharacter* Character, int32 Index);
 	void HandleBankNumber(AstudyCharacter* Character, float Value);
+
+	/**
+	 * 黑社会应急：额度已经顶死、又连一趟开采权都买不起时，
+	 * 他替你买这一趟（4000 直接记债），并把你送进矿洞。
+	 */
+	bool GoMineOnLoan(AstudyCharacter* Character);
+
+	/** 下矿：设好计时并切到矿洞（调用前该扣的钱/该记的债已经处理完） */
+	void EnterMine();
 
 	/** 打开「卖黄金」入口页（三个选项） */
 	void OpenGoldSellPage(AstudyCharacter* Character);

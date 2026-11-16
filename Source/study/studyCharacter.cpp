@@ -18,6 +18,7 @@
 #include "DropItem.h"
 #include "studyGameState.h"
 #include "studyGameInstance.h"
+#include "studyGameMode.h"
 #include "Engine/OverlapResult.h"
 #include "Merchant.h"
 #include "StudySounds.h"
@@ -639,6 +640,16 @@ bool AstudyCharacter::IsHandicraftPanelOpen() const
 		}
 	}
 	return false;
+}
+
+void AstudyCharacter::StudySettle()
+{
+	// 调试用：立刻结算，不用真玩满 12 天（验证称号 / 四行名次）
+	if (AstudyGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AstudyGameMode>() : nullptr)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[Match] 控制台强制结算（StudySettle）"));
+		GM->ForceSettle();
+	}
 }
 
 void AstudyCharacter::StudyInputState()
