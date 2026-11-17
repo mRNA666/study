@@ -5,6 +5,7 @@
 
 #include "studyCharacter.h"
 #include "studyGameInstance.h"
+#include "StudyRun.h"
 #include "StudySounds.h"
 
 #include "Components/SceneComponent.h"
@@ -18,11 +19,6 @@
 
 namespace
 {
-	UstudyGameInstance* GetRun(class UObject* Context)
-	{
-		return Context ? Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(Context)) : nullptr;
-	}
-
 	/** 欧式轮盘 37 格：0 是绿，其余 36 格 18 红 18 黑 */
 	constexpr int32 GRoulettePockets = 37;
 	constexpr float GRouletteSlotAngle = 360.f / static_cast<float>(GRoulettePockets);
@@ -389,6 +385,25 @@ void ARouletteTable::BuildColorTableFromMesh()
 	const FPositionVertexBuffer& VB = LOD.VertexBuffers.PositionVertexBuffer;
 	const FRawStaticIndexBuffer& IB = LOD.IndexBuffer;
 
+	// ---- 打包版的坑（踩过一次，记在这里）----
+	// 静态网格默认 bAllowCPUAccess = false：cook 时几何数据会上传 GPU、然后从 CPU 内存释放，
+	// 于是 FRawStaticIndexBuffer 里一个索引都没有，GetIndex() 里的 check() 当场断言崩溃。
+	// 编辑器里永远正常，因为编辑器不 cook。
+	//   修法：打开 SM_Roulette_Rotor 的 Details → 搜 "CPU" → 勾 Allow CPU Access，再重新打包。
+	//   下面这段是兜底：没有 CPU 数据就不建表，退回"号码序列 + 角度"那套判断，绝不崩。
+	const uint32 NumIdx = IB.GetNumIndices();
+	const uint32 NumVerts = VB.GetNumVertices();
+	if (NumIdx == 0u || NumVerts == 0u)
+	{
+		bColorTableReady = false;
+		UE_LOG(LogTemp, Error,
+			TEXT("[Roulette] %s 在打包版里没有 CPU 几何数据（索引=%u 顶点=%u）——"
+				 "静态网格的 Allow CPU Access 没勾。本次退回号码序列判断颜色；"
+				 "要恢复几何表，勾上那个开关再重新打包。"),
+			*SM->GetName(), NumIdx, NumVerts);
+		return;
+	}
+
 	// 三个颜色的"角度直方图"
 	TArray<int32> Votes[3];
 	for (int32 c = 0; c < 3; ++c)
@@ -438,12 +453,23 @@ void ARouletteTable::BuildColorTableFromMesh()
 			continue;
 		}
 
-		const uint32 Last = Sec.FirstIndex + Sec.NumTriangles * 3;
+		// 段的范围也要夹一下：cook 之后段的 FirstIndex/NumTriangles 理论上一致，
+		// 但这里宁可多一次判断，也不要再让 check() 把游戏打崩。
+		const uint32 Last = FMath::Min<uint32>(Sec.FirstIndex + Sec.NumTriangles * 3u, NumIdx);
 		for (uint32 i = Sec.FirstIndex; i + 2 < Last; i += 3)
 		{
-			const FVector3f A = VB.VertexPosition(IB.GetIndex(i));
-			const FVector3f B = VB.VertexPosition(IB.GetIndex(i + 1));
-			const FVector3f C = VB.VertexPosition(IB.GetIndex(i + 2));
+			const uint32 I0 = IB.GetIndex(i);
+			const uint32 I1 = IB.GetIndex(i + 1);
+			const uint32 I2 = IB.GetIndex(i + 2);
+
+			if (I0 >= NumVerts || I1 >= NumVerts || I2 >= NumVerts)
+			{
+				continue;
+			}
+
+			const FVector3f A = VB.VertexPosition(I0);
+			const FVector3f B = VB.VertexPosition(I1);
+			const FVector3f C = VB.VertexPosition(I2);
 
 			const float X = (A.X + B.X + C.X) / 3.f;
 			const float Y = (A.Y + B.Y + C.Y) / 3.f;

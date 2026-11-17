@@ -4,6 +4,7 @@
 #include "Merchant.h"
 #include "studyCharacter.h"
 #include "studyGameInstance.h"
+#include "StudyRun.h"
 #include "studyGameState.h"
 #include "studyGameMode.h"
 #include "StudySounds.h"
@@ -14,14 +15,6 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
-
-namespace
-{
-	UstudyGameInstance* GetRun(class UObject* Context)
-	{
-		return Context ? Cast<UstudyGameInstance>(UGameplayStatics::GetGameInstance(Context)) : nullptr;
-	}
-}
 
 AMerchant::AMerchant()
 {
