@@ -1,6 +1,7 @@
 # 脏金 / Dirty Gold
 
 UE 5.7 + C++ 的第一人称「竞争挖金」原型：挖矿、在黑市赌工艺品的真假、和三个模拟对手抢同一批货。
+由于时间与技术原因，暂时还没有做完PRD中的全部想法，具体内容请看PRD.md。
 
 ---
 
@@ -18,22 +19,29 @@ UE 5.7 + C++ 的第一人称「竞争挖金」原型：挖矿、在黑市赌工�
 
 | 主题 | 做法 |
 |---|---|
-| **实时可破坏地形** | SDF 隐式场描述矿洞，玩家每镐做球体布尔减法，Marching Cubes 重建三角面；单次挖掘重建 4~6 ms |
-| **打包崩溃定位** | 打包版崩在 `FAudioDevice::CreateComponent ← SpawnSoundAtLocation ← PerformDig`；根因是命名空间作用域的 `TObjectPtr` 不是 GC 根 → 换 `TStrongObjectPtr`，并依赖 `UPROPERTY` 让 GC 走反射图 |
-| **输入状态机** | 修「退出 UI 后角色永久走不动」：`SetIgnoreMoveInput(false)` 是**栈计数减一**而非清零，多处加减漏一次就永久锁死 → 改成每帧 `Reset` + 按状态绝对量写回 |
-| **经济数值验证** | 货架价格的不变式「全买成本 ≥ 1.12 × 真实价值」，用脚本跑 4000 张分布验证（可套利 0/4000），再落成游戏内 `Exec` 命令做回归 |
-| **Cook / 打包** | UE 的 Cook 是可达性驱动的，`LoadObject` 的字符串路径不会被扫到 → 配 `DirectoriesToAlwaysCook` 与 `MapsToCook`，关掉 `bCookAll` 控制包体 |
+- **实时可破坏地形**：SDF 隐式场 + Marching Cubes 逐块重建，每次挖掘只重建受影响的块（块尺寸 210 cm / 采样步长 10 cm），**单次重建 4–6 ms**；物理烘焙延后一帧，挖掘过程不掉帧。
+- **程序化矿层与掉落**：按球体体积估算碎裂量并生成矿石/废石，单块含金量 = 重量 × 含金系数 × 20 g/kg × 岩层倍率；含金系数用 `V^2.5` 幂函数抽样，贫矿占多数，使单趟收益可预测、可调。
+- **数据驱动的 NPC 框架**：用「单类 + 枚举分发」（24 处分发）承载 6 个功能完全不同的 NPC（矿长 / 黑商 / 正规买家 / 鉴宝 / 放贷 / 轮盘），关卡里复制 Actor 改枚举即可扩展，避免类继承爆炸。
+- **从美术资源反推游戏逻辑**：解析 `UStaticMesh` LOD0 的顶点/索引缓冲，按材质槽与三角形质心自动生成「角度 → 盘面颜色」查找表（360 个角度箱），换模型不需要重新标定。
+- **打包工程化**：定位并修复两类**只在 Cook 后复现**的崩溃 —— 命名空间作用域的 `TObjectPtr` 丢失 GC 根、静态网格 `bAllowCPUAccess=false` 导致 CPU 几何数据被剥离；同时把包体从 **1.4 GB 压到 560 MB**（切 Shipping、裁剪未引用资源、精简角色贴图）。
+- **可验证的数值设计**：用蒙特卡洛脚本（4000 样本）验证经济不变式「整架成本 ≥ 1.12 × 真实价值」，可套利样本 **0/4000**；随后落成游戏内 `Exec` 命令，每次改数值都能一键回归。
 
 ---
 
 ## 怎么跑
 
-1. 安装 **Unreal Engine 5.7**
-2. 双击 `study.uproject`，首次会提示「重新编译模块」，选「是」
-3. 打开 `/Game/Maps/Camp`，点 **Play**
+**环境**：Windows 10/11 · UE 5.7 · VS2022
 
-> 打包版：`Saved/StagedBuilds/Windows/study/study.exe`
+1. `git clone` 本仓库（不含角色美术资源，所以看不到自己的手，见「已知限制」）
+2. 右键 `study.uproject` → **Generate Visual Studio project files**
+3. 打开 `study.sln`，配置 **Development Editor / Win64**，生成 `studyEditor`
+   （或直接双击 `study.uproject`，提示「重新编译模块」时选「是」）
+4. 打开 `/Game/Maps/Camp`，点 **Play**
 
+**压缩包**:不想配置环境的话，可以去夸克网盘链接：https://pan.quark.cn/s/7ddce42cf69b?pwd=NDR7
+提取码：NDR7
+
+> 调试：控制台 `StudySettle` 直接结算一局（只有 Development 版有控制台）。
 ---
 
 ## 已知限制（都是刻意的）
