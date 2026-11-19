@@ -4,6 +4,7 @@
 - 这是一个可玩原型：核心循环（挖矿 → 变现 → 竞争 → 结算）完整，PRD 里的地契、工具铺、岩层分级还没做。
 - > 设计细节见 [`Docs/PRD.md`](Docs/PRD.md)。
 - **demo压缩包**：夸克网盘链接：https://pan.quark.cn/s/7ddce42cf69b?pwd=NDR7 提取码：NDR7
+- 哔哩哔哩：【28届游戏客户端开发】https://www.bilibili.com/video/BV1ots46NEfX?vd_source=9fd060a1c3f2b0709659745314e313e0
 
 ---
 
